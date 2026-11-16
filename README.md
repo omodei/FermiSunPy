@@ -30,7 +30,10 @@ optional arguments:
   -h, --help  show this help message and exit
   -ft1 ft1    Input FT1 file to convert.
   -ft2 ft2    Input FT2 file to convert.
+  --legacy    Use the original event-by-event loop (slow).
   ```
+The default conversion is vectorized (`convertFT1_fast` / `convertFT2_fast`); it agrees with the original loop to
+better than 0.1 arcsec.
 
 To visualize the newly genberated FT1 file (it is saved with `_sun.fit` extension), you can use the standard fermitools, using the center of the ROI as 0,0 in CEL coordinate, For example:
 ```bash
@@ -50,6 +53,50 @@ Rotation angle of image axis, in degrees[0] 0
 Projection method e.g. AIT|ARC|CAR|GLS|MER|NCP|SIN|STG|TAN:[] CAR
 ```
 the output file can be visualized with standard visualization tools, such as fv, ds9 or with python code (astropy,...)
+
+## Solar-flare analysis console (GUI) and pipeline
+
+A local web console that sets up and runs a complete Fermi analysis of a solar flare (GOES + GBM + LLE + LAT)
+and produces an HTML report. It generalizes the scripts of the `solarflares` repository
+(`SunModel.py`, `SolarTemplates.py`, `timeresolved_analysis.py`, `spectral_analysis.py`, ...).
+
+```bash
+conda activate FermiSunPy        # needs fermitools, threeML, astromodels and sunpy (pip install "sunpy[all]")
+./gui/start_gui.sh               # serves http://localhost:8766
+```
+
+1. **Flare & data**: pick a day, *Find flares* lists the GOES flares (HEK, via sunpy) and the GBM triggers;
+   *Use* fills T0 (GOES start), end, peak and class. *Download data* fetches into `flares/SOLYYYYMMDD_HHMM/`:
+   GOES XRS (sunpy `Fido`), GBM daily CSPEC for the 14 detectors with the **Sun-pointed RSP2** responses from
+   hesperia (merged over the window), LLE files of GBM triggers in the window (if any), LAT FT1/FT2 within 15°
+   of the Sun, the LAT Sun visibility windows, and optionally **Sun-centred** FT1/FT2 (`suncenter.py`).
+2. **GBM detectors**: sorted by the Sun angle; the two NaI and the BGO facing the Sun are pre-selected.
+3. **Light curves & intervals**: GOES, GBM NaI/BGO bands, LLE, LAT photons and the Sun off-axis/zenith angles
+   on a common UTC axis. Drag to define GBM/LLE backgrounds, joint spectral-fit intervals, the LAT localization
+   interval, the LAT time-integrated interval and custom LAT bins.
+4. **LAT analysis**: event class, ROI, zenith/θ cuts, energy range and flux band, Sun-centred frame, localization
+   (gtfindsrc + TS map), time-resolved binning (visibility windows, Bayesian blocks, N photons, custom) and LAT
+   models (pion-decay template, power law, cutoff power law).
+5. **Spectral models**: build models from components — `pow_le`, `exp_co_le`, `pow_he`, `exp_co_he`
+   (bremsstrahlung continua), `nar`, `brd` (narrow/broad nuclear de-excitation line templates), `g_2p2MeV`,
+   `g_511keV`, `g_1p7MeV` (lines), `pion` (pion-decay template) — e.g. `exp_co_le+nar+brd+g_2p2MeV+pion`.
+6. **Run & report**: writes `config_<flare>.json`, runs the steps and builds `results/report.html`.
+
+Pipeline steps (also usable without the GUI):
+
+| step | module | output (`flares/<id>/results/`) |
+|---|---|---|
+| download | `python -m sunflare.fetch_data --t0 "2025-11-11 09:49:00" --tend ... --peak ... [--sun-centered] [--lat-ft1 F --lat-ft2 F] [--lle-dir D]` | `flare_info.json`, data |
+| light curves | `python -m sunflare.lightcurves <config>` | `lightcurves/overview.png, zoom.png` |
+| localization | `python -m sunflare.localization <config>` | `localization/tsmap.png, localization.json` (offset from the Sun centre, helioprojective) |
+| LAT likelihood | `python -m sunflare.lat_analysis <config>` | `lat/lat_summary.json, lat_lightcurve.png` (flux, proton index, TS, ULs, source-probability events) |
+| joint fits | `python -m sunflare.spectral <config>` | `spectrum_<t0>-<t1>/summary.json, vfv.png, counts_<model>.png` (BIC ranking, TS of added components) |
+| report | `python -m sunflare.make_report <config>` | `report.html` |
+| all | `python -m sunflare.run_analysis <config> --steps lightcurves,localization,lat,spectral,report` | |
+
+`--lat-ft1/--lat-ft2` and `--lle-dir` import files already on disk (e.g. weekly files, or when the LAT data server
+is down). The pion/NAR/BRD astromodels templates are built on first use from `solarflares/Sun/data`
+(override with `SUNFLARE_TEMPLATES`); flare data go to `flares/` (override with `SUNFLARE_DATA`).
 
 ---
 For question and comments: [nicola.omodei@stanford.edu](mailto:nicola.omodei@stanford.edu)
