@@ -30,6 +30,8 @@ DEFAULTS = {
     'DWNL_TMAX': 14400.0,
     # GBM
     'use_gbm': True,
+    'spec_use_nai': True,         # NaI detectors in the joint spectral fit
+    'spec_use_bgo': True,         # BGO detectors in the joint spectral fit
     'GBM_detectors': [],
     'GBM_bkg_intervals': [],
     'GBM_bkg_poly_order': -1,
@@ -224,7 +226,9 @@ def write_config(cfg):
     for k in ('LOC_interval', 'LAT_integrated_interval'):
         v = c.get(k)
         c[k] = [float(v[0]), float(v[1])] if v and float(v[1]) > float(v[0]) else None
-    if c['spectral_intervals'] and c['use_gbm'] and not c['GBM_bkg_intervals']:
+    gbm_in_fit = c['use_gbm'] and any((d[0] == 'n' and c['spec_use_nai']) or (d[0] == 'b' and c['spec_use_bgo'])
+                                      for d in c.get('GBM_detectors') or [])
+    if c['spectral_intervals'] and gbm_in_fit and not c['GBM_bkg_intervals']:
         raise ValueError('The joint spectral fit needs at least one GBM background interval')
     if c['use_lle'] and c['spectral_intervals'] and not c['LLE_bkg_intervals']:
         raise ValueError('Select at least one LLE background interval, or switch LLE off')

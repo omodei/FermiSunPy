@@ -292,6 +292,11 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
   <div class="mlist" id="modellist"></div>
   <details><summary>Presets</summary><div class="row" id="presets" style="margin-top:10px"></div></details>
   <h3>Data in the joint fit</h3>
+  <div class="row" style="gap:18px">
+    <label class="row" style="gap:6px"><input type="checkbox" id="f-spec_use_nai" data-key="spec_use_nai" data-type="bool"> Use GBM NaI</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="f-spec_use_bgo" data-key="spec_use_bgo" data-type="bool"> Use GBM BGO</label>
+    <span class="hint" id="specdata"></span>
+  </div>
   <div class="grid-form">
     <div class="field"><label for="f-GBM_NAI_EMIN_KEV">NaI from (keV)</label><input type="number" id="f-GBM_NAI_EMIN_KEV" data-key="GBM_NAI_EMIN_KEV" step="any"></div>
     <div class="field"><label for="f-GBM_NAI_EMAX_KEV">NaI to (keV)</label><input type="number" id="f-GBM_NAI_EMAX_KEV" data-key="GBM_NAI_EMAX_KEV" step="any"></div>
@@ -469,7 +474,7 @@ function renderDetectors() {
     const d = c.dataset.det, L = S.cfg.GBM_detectors;
     if (c.checked && !L.includes(d)) L.push(d); if (!c.checked) L.splice(L.indexOf(d), 1);
     L.sort((a, b) => (a[0] === 'b') - (b[0] === 'b') || a.localeCompare(b));
-    renderDetectors(); fillDetSelects(); loadLC(); changed();
+    renderDetectors(); fillDetSelects(); loadLC(); specData(); changed();
   }));
 }
 function fillDetSelects() {
@@ -661,6 +666,7 @@ $$('[data-add]').forEach(b => b.addEventListener('click', () => { const c = (S.v
 /* ---------------------------------------------------------------- settings */
 function renderSettings() {
   for (const el of $$('[data-key]')) { const v = S.cfg[el.dataset.key]; if (el.type === 'checkbox') el.checked = !!v; else el.value = v ?? ''; }
+  specData();
   $('#f-use_lle').disabled = !S.info.has_lle; $('#f-use_lat').disabled = !S.info.has_lat; $('#f-spec_use_lat').disabled = !S.info.has_lat; $('#f-use_gbm').disabled = !S.info.has_gbm;
 }
 for (const el of $$('[data-key]')) el.addEventListener('change', () => {
@@ -669,6 +675,7 @@ for (const el of $$('[data-key]')) el.addEventListener('change', () => {
   if (k === 'use_lle' || k === 'use_lat') { buildPanels(); loadLC(); renderIntervals(); }
   if (k === 'sun_centered' || k === 'roi') { loadLC(); if (k === 'sun_centered' && S.cfg.sun_centered && !S.info.has_lat_sun) toast('Sun-centred FT1/FT2 will be created at the start of the LAT steps'); }
   if (k === 'zmax') drawAll();
+  specData();
   changed();
 });
 $('#resetdefaults').addEventListener('click', () => {
@@ -676,6 +683,23 @@ $('#resetdefaults').addEventListener('click', () => {
   for (const k of ['irfs', 'roi', 'zmax', 'thetamax', 'strategy', 'LAT_EMIN_MEV', 'LAT_EMAX_MEV', 'FLUX_EMIN_MEV', 'FLUX_EMAX_MEV', 'LAT_TS_MIN', 'LOC_EMIN_MEV', 'LOC_HALF_SIZE', 'LOC_NSIDE', 'LAT_TR_method', 'LAT_TR_bb_p0', 'LAT_TR_N', 'LAT_TR_models']) S.cfg[k] = structuredClone(d[k]);
   renderSettings(); renderLatModels(); changed(); toast('LAT settings restored to defaults');
 });
+function fitInstruments() {
+  const c = S.cfg, I = S.info, out = [];
+  if (c.use_gbm && I.has_gbm) {
+    const d = c.GBM_detectors.filter(x => (x[0] === 'n' && c.spec_use_nai) || (x[0] === 'b' && c.spec_use_bgo));
+    out.push(...d);
+  }
+  if (c.use_lle && I.has_lle) out.push('LLE');
+  if (c.spec_use_lat && c.use_lat && I.has_lat) out.push('LAT');
+  return out;
+}
+function specData() {
+  ['GBM_NAI_EMIN_KEV', 'GBM_NAI_EMAX_KEV'].forEach(k => $('#f-' + k).disabled = !S.cfg.spec_use_nai || !S.cfg.use_gbm);
+  ['GBM_BGO_EMIN_KEV', 'GBM_BGO_EMAX_KEV'].forEach(k => $('#f-' + k).disabled = !S.cfg.spec_use_bgo || !S.cfg.use_gbm);
+  $('#f-spec_use_nai').disabled = $('#f-spec_use_bgo').disabled = !S.cfg.use_gbm || !S.info.has_gbm;
+  const f = fitInstruments();
+  $('#specdata').textContent = f.length ? 'Fitted together: ' + f.join(', ') : 'No data selected for the joint fit';
+}
 function renderLatModels() {
   $('#latmodels').innerHTML = '<span class="lab">LAT spectral models:</span>' + Object.entries(S.meta.lat_models).map(([k, lab]) => `<label class="row" style="gap:6px"><input type="checkbox" data-latm="${k}" ${S.cfg.LAT_TR_models.includes(k) ? 'checked' : ''}> ${esc(lab)}</label>`).join('');
   $$('[data-latm]').forEach(c => c.addEventListener('change', () => { const k = c.dataset.latm; S.cfg.LAT_TR_models = S.cfg.LAT_TR_models.filter(x => x !== k); if (c.checked) S.cfg.LAT_TR_models.push(k); changed(); }));
@@ -705,8 +729,9 @@ function setSaved(t) { $('#savedstate').textContent = `${S.fid ? S.fid + ' · ' 
 function problems() {
   const c = S.cfg, p = [];
   if (c.spectral_intervals.length) {
-    if (c.use_gbm && !c.GBM_detectors.length) p.push('choose GBM detectors (or switch GBM off)');
-    if (c.use_gbm && !c.GBM_bkg_intervals.length) p.push('add a GBM background interval');
+    const fit = fitInstruments(), gbmFit = fit.some(x => /^[nb]/.test(x) && x !== 'LLE' && x !== 'LAT');
+    if (!fit.length) p.push('select at least one instrument for the joint fit (NaI, BGO, LLE or LAT)');
+    if (gbmFit && !c.GBM_bkg_intervals.length) p.push('add a GBM background interval');
     if (c.use_lle && S.info.has_lle && !c.LLE_bkg_intervals.length) p.push('add an LLE background interval (or switch LLE off)');
     if (!c.spectral_models.length) p.push('add at least one spectral model');
     for (const [a, b] of c.spectral_intervals) for (const [x, y] of c.GBM_bkg_intervals) if (a < y && b > x) { p.push(`spectral interval ${a}–${b} s overlaps the GBM background ${x}–${y} s`); break; }
