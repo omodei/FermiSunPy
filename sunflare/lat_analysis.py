@@ -150,26 +150,14 @@ integrated = analyse(integ[0], integ[1], 'integrated', plot=True)
 log('### STAGE: LAT time-resolved fits')
 resolved = [analyse(a, b, f'bin {i + 1}/{len(bins)}') for i, (a, b) in enumerate(bins)] if bins != [integ] else [integrated]
 
-# ------------------------------------------------------------------ source-probability events
-events = []
-for f in glob.glob(os.path.join(lat_data.interval_dir(out, integ[0], integ[1]) or out, '*_filt_prob.fit*')):
-    from astropy.io import fits
-    with fits.open(f) as h:
-        d = h['EVENTS'].data
-        pcol = 'GRB' if 'GRB' in d.names else [c for c in d.names if c not in fits.getheader(f, 1)][-1]
-        m = d[pcol] > 0.5
-        for i in np.where(m)[0]:
-            events.append({'t': float(d['TIME'][i] - T0), 'E_MeV': float(d['ENERGY'][i]), 'ra': float(d['RA'][i]),
-                           'dec': float(d['DEC'][i]), 'prob': float(d[pcol][i]),
-                           'utc': common.met2utc(d['TIME'][i])[11:19]})
-events.sort(key=lambda x: x['t'])
-common.save_json('lat_events.json', events)
-log(f'  {len(events)} events with probability > 0.5 of coming from the Sun')
-
 summary = {'integrated': integrated, 'resolved': resolved, 'method': method, 'models': models,
            'flux_band_MeV': [E1, E2], 'TS_MIN': cfg.LAT_TS_MIN, 'windows': windows, 'source_position': [RA, DEC],
            'sun_centered': bool(cfg.sun_centered), 'irfs': cfg.irfs}
 common.save_json('lat_summary.json', summary)
+
+# source-probability events of the time-integrated interval (gtsrcprob), for the report's event table
+from sunflare.lat_events import extract as extract_events  # noqa: E402
+extract_events(cfg, log)
 
 # ------------------------------------------------------------------ plots
 main = 'pion' if 'pion' in models else models[0]

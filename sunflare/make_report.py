@@ -64,6 +64,7 @@ def table(head, rows, cls=''):
 
 
 sections = []
+EVENTS = []
 
 # ------------------------------------------------------------------ summary
 lc = common.load_json(os.path.join(R, 'lightcurves', 'lightcurves.json'), {})
@@ -169,12 +170,22 @@ if lat:
     for k in lat['models']:
         h += img(os.path.join(R, 'lat', f'lat_integrated_counts_{k}.png'), f'Count spectrum, {common.LAT_MODELS[k]}', 'fig half')
     h += f'<h3>Time-resolved ({E(lat["method"])} bins)</h3>' + table(head, rows_for(lat['resolved']))
-    ev = common.load_json(os.path.join(R, 'lat', 'lat_events.json'), [])
-    if ev:
-        h += f'<h3>Events with source probability > 0.5 ({len(ev)})</h3>' + table(
-            ['UTC', 'T − T0 [s]', 'Energy [MeV]', 'RA', 'Dec', 'Probability'],
-            [[e['utc'], f'{e["t"]:.1f}', f'{e["E_MeV"]:.0f}', f'{e["ra"]:.2f}', f'{e["dec"]:.2f}', f'{e["prob"]:.3f}']
-             for e in sorted(ev, key=lambda x: -x['E_MeV'])[:200]])
+    from sunflare.lat_events import load_or_extract
+    EVENTS = load_or_extract(cfg, log=lambda *a: print(*a, flush=True)) or []
+    if EVENTS:
+        it = lat['integrated']
+        h += (f'<h3 id="evblock">Events with source probability</h3><p class="muted">Events of the time-integrated '
+              f'interval ({it["t0"]:g}–{it["t1"]:g} s) from the <code>*_filt_prob.fit</code> file written by '
+              '<code>gtsrcprob</code>: P(Sun), P(Galactic) and P(isotropic) are the probabilities that each event comes '
+              'from that model component. Distance from the Sun centre at the event time; 68% PSF radius from the '
+              f'{E(cfg.irfs)} IRFs at the event energy, off-axis angle and conversion type. Click a header to sort.</p>'
+              '<div class="evctl"><label>P(Sun) ≥ <input type="number" id="evpmin" value="0" min="0" max="1" step="0.05"></label>'
+              '<label>E ≥ <input type="number" id="evemin" value="0" min="0" step="any"> MeV</label>'
+              '<label>T − T0 from <input type="number" id="evtmin" step="any" placeholder="min"> to '
+              '<input type="number" id="evtmax" step="any" placeholder="max"> s</label>'
+              '<span class="muted" id="evcount"></span>'
+              '<button type="button" class="evbtn" id="evcsv">Download CSV</button></div>'
+              '<div class="tablebox evbox"><table id="evtable"></table></div>')
     sections.append(('lat', 'LAT likelihood', h))
 
 # ------------------------------------------------------------------ joint spectra
@@ -254,6 +265,17 @@ details {{ border:1px solid var(--line); border-radius:8px; padding:8px 12px; ba
 summary {{ cursor:pointer }} section.spec {{ display:grid; gap:10px; padding-bottom:16px; border-bottom:1px dashed var(--line) }}
 pre {{ background:var(--raise); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font-size:12px }}
 code {{ font-family:ui-monospace,Menlo,monospace; font-size:13px }}
+th.sort {{ cursor:pointer; user-select:none; white-space:nowrap }} th.sort:hover {{ color:var(--fg) }}
+th.sort[aria-sort="ascending"]::after {{ content:" ▲"; color:var(--accent) }} th.sort[aria-sort="descending"]::after {{ content:" ▼"; color:var(--accent) }}
+.evbox {{ max-height:560px; overflow:auto }} .evbox thead th {{ position:sticky; top:0; z-index:1 }}
+.evbox td {{ white-space:nowrap }} .evbox td.num {{ font-family:ui-monospace,Menlo,monospace; font-size:13px; text-align:right }}
+.pbar {{ display:inline-grid; grid-template-columns:52px 44px; gap:6px; align-items:center }}
+.pbar i {{ height:6px; border-radius:3px; background:var(--line); position:relative; overflow:hidden }}
+.pbar i b {{ position:absolute; inset:0 auto 0 0; background:var(--accent) }}
+tr.hi td {{ background:var(--accent-soft) }}
+.evctl {{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:14px }}
+.evctl input[type=number] {{ width:84px; font:13px ui-monospace,Menlo,monospace; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg) }}
+.evbtn {{ font:500 13px system-ui; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg); cursor:pointer; margin-left:auto }}
 </style></head><body>
 <header class="top"><span class="muted">Fermi solar-flare analysis report</span><h1>{E(cfg.name)} &nbsp;{E(info.get("goes_class", ""))}</h1>
 <span class="muted">Generated {datetime.datetime.now():%Y-%m-%d %H:%M} · T0 = {E(info.get("t0_utc", ""))} UTC · FermiSunPy / threeML</span></header>
@@ -264,8 +286,57 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
   document.querySelectorAll('.tab').forEach(s => s.hidden = s.id !== 't-' + b.dataset.t);
   try {{ history.replaceState(null, '', '#' + b.dataset.t); }} catch (e) {{}}
 }}));
+EVJS
 const h = location.hash.slice(1); const tb = document.querySelector(`nav button[data-t="${{h}}"]`); if (tb) tb.click();
 </script></body></html>'''
+EVJS = r'''
+/* LAT events (gtsrcprob): filters + sortable table, as in the GRBAnalyzer report */
+const EV = EVDATA;
+const $e = s => document.querySelector(s);
+const f3 = (v, n) => v == null ? '–' : v.toFixed(n);
+const EVCOLS = [
+  ['bin', 'Bin', r => r.bin || '–', 'txt'], ['utc', 'UTC', r => r.utc, 'txt'], ['t', 'T − T0 (s)', r => r.t.toFixed(2)],
+  ['E', 'Energy (MeV)', r => r.E >= 1000 ? r.E.toFixed(0) : r.E.toFixed(1)],
+  ['pSun', 'P(Sun)', r => r.pSun == null ? '–' : `<span class="pbar"><i><b style="width:${(100 * r.pSun).toFixed(1)}%"></b></i>${r.pSun.toFixed(3)}</span>`],
+  ['pGal', 'P(Galactic)', r => f3(r.pGal, 3)], ['pIso', 'P(isotropic)', r => f3(r.pIso, 3)],
+  ['sep', 'Sun dist. (°)', r => f3(r.sep, 2)], ['r68', 'PSF r68 (°)', r => f3(r.r68, 2)],
+  ['theta', 'θ (°)', r => f3(r.theta, 1)], ['zen', 'Zenith (°)', r => f3(r.zen, 1)],
+  ['conv', 'Conv.', r => r.conv, 'txt'], ['cls', 'Best class', r => r.cls, 'txt'],
+  ['ra', 'RA (°)', r => f3(r.ra, 3)], ['dec', 'Dec (°)', r => f3(r.dec, 3)], ['run', 'Run', r => r.run], ['id', 'Event ID', r => r.id]];
+const evSort = { key: 't', dir: 1 };
+function evRows() {
+  const pmin = +$e('#evpmin').value || 0, emin = +$e('#evemin').value || 0;
+  const tmin = $e('#evtmin').value === '' ? -Infinity : +$e('#evtmin').value, tmax = $e('#evtmax').value === '' ? Infinity : +$e('#evtmax').value;
+  const rows = EV.filter(r => (r.pSun ?? 0) >= pmin && r.E >= emin && r.t >= tmin && r.t <= tmax);
+  const k = evSort.key, d = evSort.dir;
+  rows.sort((a, b) => { const x = a[k], y = b[k]; if (typeof x === 'string' || typeof y === 'string') return d * String(x).localeCompare(String(y), undefined, { numeric: true }); return d * ((x ?? -Infinity) - (y ?? -Infinity)); });
+  return rows;
+}
+function evRender() {
+  const rows = evRows();
+  const head = '<thead><tr><th>#</th>' + EVCOLS.map(([k, l]) => `<th class="sort" data-k="${k}" aria-sort="${evSort.key === k ? (evSort.dir > 0 ? 'ascending' : 'descending') : 'none'}">${l}</th>`).join('') + '</tr></thead>';
+  const body = rows.map((r, i) => `<tr class="${(r.pSun ?? 0) >= 0.9 && r.E >= 1000 ? 'hi' : ''}"><td class="num">${i + 1}</td>` + EVCOLS.map(([k, , f, t]) => `<td class="${t ? '' : 'num'}">${f(r)}</td>`).join('') + '</tr>').join('');
+  $e('#evtable').innerHTML = head + '<tbody>' + body + '</tbody>';
+  const n90 = rows.filter(r => (r.pSun ?? 0) >= 0.9).length;
+  $e('#evcount').textContent = `${rows.length} of ${EV.length} events shown · ${n90} with P(Sun) ≥ 0.9 · highlighted: P(Sun) ≥ 0.9 and E ≥ 1 GeV`;
+  $e('#evtable').querySelectorAll('th.sort').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    if (evSort.key === k) evSort.dir *= -1; else { evSort.key = k; evSort.dir = ['E', 'pSun'].includes(k) ? -1 : 1; }
+    evRender();
+  }));
+}
+if (EV.length && $e('#evtable')) {
+  ['#evpmin', '#evemin', '#evtmin', '#evtmax'].forEach(s => $e(s).addEventListener('input', evRender));
+  $e('#evcsv').addEventListener('click', () => {
+    const keys = ['t', 'utc', 'E', 'pSun', 'pGal', 'pIso', 'sep', 'r68', 'theta', 'zen', 'conv', 'cls', 'ra', 'dec', 'run', 'id', 'bin'];
+    const csv = [keys.join(',')].concat(evRows().map(r => keys.map(k => r[k] ?? '').join(','))).join('\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'FLARENAME_lat_events.csv'; document.body.appendChild(a); a.click(); a.remove();
+  });
+  evRender();
+}
+'''.replace('EVDATA', json.dumps(EVENTS).replace('</', '<\\/')).replace('FLARENAME', cfg.name)
+page = page.replace('EVJS', EVJS, 1)
 out = os.path.join(R, 'report.html')
 os.makedirs(R, exist_ok=True)
 with open(out, 'w') as f:
