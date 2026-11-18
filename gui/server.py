@@ -28,7 +28,8 @@ import numpy as np  # noqa: E402
 
 JOBS = {}
 LOCK = threading.Lock()
-ENV = dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg', PYTHONPATH=REPO)
+ENV = dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg',
+           PYTHONPATH=os.pathsep.join([REPO, os.environ.get('PYTHONPATH', '')]))   # keeps sunflare/_mpfix
 
 
 # ------------------------------------------------------------------ jobs

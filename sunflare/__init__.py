@@ -25,3 +25,14 @@ def _fermitools_env():
 
 
 _fermitools_env()
+
+
+def _gtburst_mp_fix():
+    """Put sunflare/_mpfix (a sitecustomize for GtBurst's parallel gtexpmap) first on PYTHONPATH for child processes."""
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_mpfix')
+    parts = [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]
+    if d not in parts:
+        os.environ['PYTHONPATH'] = os.pathsep.join([d] + parts)
+
+
+_gtburst_mp_fix()

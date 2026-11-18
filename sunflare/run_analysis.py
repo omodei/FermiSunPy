@@ -39,7 +39,8 @@ for name in steps:
     status['steps'][name] = {'state': 'running', 'start': time.time()}
     common.save_json(status_file, status)
     p = subprocess.run([sys.executable, '-u', '-m', f'sunflare.{STEPS[name]}', cfg.config_file],
-                       cwd=common.REPO, env=dict(os.environ, PYTHONPATH=common.REPO, MPLBACKEND='Agg'))
+                       cwd=common.REPO, env=dict(os.environ, PYTHONPATH=os.pathsep.join([common.REPO, os.environ.get('PYTHONPATH', '')]),
+                                                 MPLBACKEND='Agg'))
     st = status['steps'][name]
     st['state'] = 'done' if p.returncode == 0 else 'failed'
     st['seconds'] = round(time.time() - st.pop('start'), 1)
