@@ -123,6 +123,10 @@ td.num { font-family: var(--f-mono); font-size: 13px } td.l { text-align: left }
 .mrow .mname { flex: 1; min-width: 0 } .mrow .badge { font-size: 11px; color: var(--accent); white-space: nowrap }
 .ptable { border: 1px solid var(--line); border-radius: 7px; padding: 10px; background: var(--surface); display: grid; gap: 8px; margin: -2px 0 6px }
 .ptable table td { padding: 3px 6px } .ptable table th { padding: 5px 6px }
+.pview { border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; background: var(--raise); display: grid; gap: 6px }
+.pview .row { gap: 10px; align-items: center; flex-wrap: wrap } .pview canvas { display: block; width: 100%; height: 240px }
+.pview .pvr { font: 12px var(--f-mono); color: var(--muted); min-height: 16px }
+.ptable input[type=range] { display: block; width: 112px; margin: 3px 0 0; accent-color: var(--accent) }
 .ptable input[type=number] { width: 112px; padding: 3px 6px; font: 12px var(--f-mono) }
 .ptable tr.ov td { background: var(--accent-soft) } .ptable tr.locked td { color: var(--muted) }
 .ptable td.src { font-size: 11px; color: var(--muted); white-space: nowrap } .ptable input.bad { outline: 2px solid var(--bad) }
@@ -879,6 +883,7 @@ function paramTable(box, opts) {
       const locked = !lat && c === 'brd' && d.name === 's' && S.cfg.link_line_index && comps.includes('nar');
       const a = O[keyOf(c, d.name, 'all')] || {}, b = lat ? {} : (O[keyOf(c, d.name, 'model')] || {});
       const eff = Object.assign({ value: d.value, min: d.min, max: d.max, fix: d.fix }, a, b);
+      if (locked) { const nd = (P.components.nar || []).find(x => x.name === 's'); eff.value = Object.assign({ value: nd && nd.value }, O[keyOf('nar', 's', 'all')] || {}, O[keyOf('nar', 's', 'model')] || {}).value; }
       const src = [Object.keys(a).length ? (lat ? 'set' : 'all models') : '', Object.keys(b).length ? 'this model' : ''].filter(Boolean).join(' + ') || 'default';
       const cur = O[keyOf(c, d.name, scope)];
       const bad = !locked && ((eff.min != null && eff.max != null && eff.min >= eff.max) || eff.value < (eff.min ?? -Infinity) || eff.value > (eff.max ?? Infinity)
@@ -887,17 +892,30 @@ function paramTable(box, opts) {
       const dis = locked ? 'disabled' : '';
       h += `<tr class="${locked ? 'locked' : src !== 'default' ? 'ov' : ''}" data-c="${c}" data-p="${d.name}">`
         + `<td class="mono">${c}</td><td class="mono" title="${esc(d.desc || '')}">${d.name}${d.unit ? ` <span class="muted">[${esc(d.unit)}]</span>` : ''}</td>`
-        + ['value', 'min', 'max'].map(f => `<td><input type="number" step="any" data-f="${f}"${hard} value="${fmtN(eff[f])}" ${dis} class="${bad ? 'bad' : ''}" aria-label="${c} ${d.name} ${f}"></td>`).join('')
+        + ['value', 'min', 'max'].map(f => `<td><input type="number" step="any" data-f="${f}"${hard} value="${fmtN(eff[f])}" ${dis} class="${bad ? 'bad' : ''}" aria-label="${c} ${d.name} ${f}">`
+          + (f === 'value' && !locked && sliderOK(eff) ? `<input type="range" min="0" max="1000" step="1" data-slider value="${toSlider(eff, eff.value)}" aria-label="${c} ${d.name} start value slider" title="Drag to preview; release to set the start value">` : '') + '</td>').join('')
         + `<td style="text-align:center"><input type="checkbox" data-f="fix" ${eff.fix ? 'checked' : ''} ${dis} aria-label="${c} ${d.name} fixed"></td>`
         + `<td class="src">${locked ? 'linked to nar.s' : src}${d.hard ? `<br>grid ${d.hard[0]}–${d.hard[1]}` : ''}</td>`
         + `<td>${cur ? `<button class="small" data-reset title="Remove the setting for ${scope === 'model' ? 'this model' : 'all models'}">reset</button>` : ''}</td></tr>`;
     }
   }
-  box.innerHTML = h + '</tbody></table></div>';
+  box.innerHTML = `<div class="pview"><div class="row"><span class="lab">Model at the start values</span><div class="seg" role="group" aria-label="Spectrum shown">`
+    + Object.entries(PV_MODES).map(([k, l]) => `<button data-pvm="${k}" aria-pressed="${S.pvMode === k}">${l}</button>`).join('')
+    + `</div><label class="row" style="gap:5px"><input type="checkbox" data-pvc ${S.pvComps ? 'checked' : ''}> components</label><span class="pvr"></span></div><canvas aria-label="Preview of the spectral model"></canvas></div>`
+    + h + '</tbody></table></div>';
+  box._opts = opts; previewSoon(box, 0);
+  box.querySelectorAll('[data-pvm]').forEach(bt => bt.addEventListener('click', () => { S.pvMode = bt.dataset.pvm; document.querySelectorAll('[data-pvm]').forEach(o => o.setAttribute('aria-pressed', o.dataset.pvm === S.pvMode)); document.querySelectorAll('.ptable').forEach(drawPreview); }));
+  box.querySelector('[data-pvc]').addEventListener('change', e => { S.pvComps = e.target.checked; document.querySelectorAll('[data-pvc]').forEach(o => o.checked = S.pvComps); document.querySelectorAll('.ptable').forEach(drawPreview); });
   box.querySelectorAll('[data-sc]').forEach(btn => btn.addEventListener('click', () => { S[scopeKey] = btn.dataset.sc; paramTable(box, opts); }));
   box.querySelectorAll('tr[data-c]').forEach(tr => {
     const c = tr.dataset.c, pn = tr.dataset.p, key = keyOf(c, pn, scope);
     const d = (lat ? P.lat[c] : P.components[c]).find(x => x.name === pn);
+    const num = tr.querySelector('input[data-f=value]'), sl = tr.querySelector('input[data-slider]');
+    if (num) num.addEventListener('input', () => { if (sl && num.value !== '') sl.value = toSlider(effOf(tr), +num.value); previewSoon(box); });
+    if (sl) {
+      sl.addEventListener('input', () => { num.value = fmtN(fromSlider(effOf(tr), +sl.value)); previewSoon(box, 30); });
+      sl.addEventListener('change', () => num.dispatchEvent(new Event('change')));
+    }
     tr.querySelectorAll('input[data-f]').forEach(inp => inp.addEventListener('change', () => {
       const f = inp.dataset.f, o = (O[key] ||= {});
       if (f === 'fix') o.fix = inp.checked;
@@ -916,6 +934,73 @@ function paramTable(box, opts) {
     if (r) r.addEventListener('click', () => { delete O[key]; changed(); if (lat) renderLatParams(); else renderModels(); });
   });
 }
+/* ---- live preview of the model at the start values ---- */
+const PV_MODES = { N: 'N(E)', F: 'E N(E)', V: 'νFν' };
+S.pvMode = 'V'; S.pvComps = true; S.pvCache = {};
+const isLogPar = e => e.min > 0 && e.max / e.min >= 100;
+const sliderOK = e => e.min != null && e.max != null && isFinite(e.min) && isFinite(e.max) && e.max > e.min;
+const toSlider = (e, v) => { if (!sliderOK(e)) return 0; const t = isLogPar(e) ? (Math.log10(Math.max(v, e.min)) - Math.log10(e.min)) / (Math.log10(e.max) - Math.log10(e.min)) : (v - e.min) / (e.max - e.min); return Math.round(1000 * Math.min(1, Math.max(0, t))); };
+const fromSlider = (e, x) => { const t = x / 1000; const v = isLogPar(e) ? 10 ** (Math.log10(e.min) + t * (Math.log10(e.max) - Math.log10(e.min))) : e.min + t * (e.max - e.min); return +v.toPrecision(4); };
+function effOf(tr) { const g = f => { const i = tr.querySelector(`input[data-f=${f}]`); return i && i.value !== '' ? +i.value : null; }; return { value: g('value'), min: g('min'), max: g('max') }; }
+function pvRange(lat) {
+  const c = S.cfg, I = S.info || {};
+  if (lat) return [c.LAT_EMIN_MEV * 1e3, c.LAT_EMAX_MEV * 1e3];
+  const emax = c.spec_use_lat && I.has_lat ? c.SPEC_LAT_EMAX_MEV * 1e3 : (c.use_lle && I.has_lle ? c.LLE_EMAX_MEV * 1e3 : c.GBM_BGO_EMAX_KEV);
+  return [Math.min(c.GBM_NAI_EMIN_KEV ?? 10, 300), emax || 1e6];
+}
+function previewSoon(box, ms = 120) { clearTimeout(box._pvT); box._pvT = setTimeout(() => preview(box), ms); }
+async function preview(box) {
+  const o = box._opts; if (!o || !box.isConnected) return;
+  const values = {};
+  box.querySelectorAll('tr[data-c]').forEach(tr => { if (tr.classList.contains('locked')) return; const v = tr.querySelector('input[data-f=value]'); if (v && v.value !== '' && isFinite(+v.value)) values[`${tr.dataset.c}.${tr.dataset.p}`] = +v.value; });
+  const [emin, emax] = pvRange(!!o.lat);
+  const body = o.lat ? { lat: o.lat, values, emin, emax } : { model: o.model, link: !!S.cfg.link_line_index, values, emin, emax };
+  const key = JSON.stringify(body);
+  if (S.pvCache[key]) { box._pv = S.pvCache[key]; drawPreview(box); return; }
+  const seq = (box._pvSeq = (box._pvSeq || 0) + 1);
+  if (!box._pv) box.querySelector('.pvr').textContent = 'computing the model… (the first time takes a few seconds)';
+  try {
+    const r = await api('/api/model_preview', body);
+    S.pvCache[key] = r; const ks = Object.keys(S.pvCache); if (ks.length > 200) delete S.pvCache[ks[0]];
+    if (seq !== box._pvSeq) return;
+    box._pv = r; drawPreview(box);
+  } catch (e) { box.querySelector('.pvr').textContent = 'preview unavailable: ' + e.message; }
+}
+const PVCOL = ['#2563eb', '#0d9488', '#ca8a04', '#9333ea', '#db2777', '#ea580c', '#0891b2', '#65a30d'];
+function drawPreview(box) {
+  const d = box._pv, cv = box.querySelector('.pview canvas'); if (!d || !cv) return;
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  c.font = '11px ' + css('--f-mono');
+  const x0 = 70, x1 = W - 12, y0 = 8, y1 = H - 24, E = d.E, mode = S.pvMode;
+  const w = E.map(e => mode === 'N' ? 1 : mode === 'F' ? e : e * e * 1.602176634e-9);
+  const tr = arr => arr.map((v, i) => v == null ? null : v * w[i]);
+  const tot = tr(d.total), comps = Object.fromEntries(Object.entries(d.comps).map(([k, a]) => [k, tr(a)]));
+  const good = tot.filter(v => v > 0).sort((a, b) => a - b);
+  if (!good.length) { box.querySelector('.pvr').textContent = 'the model is zero over this energy range'; return; }
+  const top = good[Math.floor(good.length * 0.97)], hi = top * 6, lo = Math.max(good[0] / 3, top * (mode === 'V' ? 1e-5 : 1e-7));
+  const lx0 = Math.log10(E[0]), lx1 = Math.log10(E[E.length - 1]), L0 = Math.log10(lo), L1 = Math.log10(hi);
+  const xs = e => x0 + (x1 - x0) * (Math.log10(e) - lx0) / (lx1 - lx0), ys = v => y1 - (y1 - y0) * (Math.log10(v) - L0) / (L1 - L0);
+  c.strokeStyle = css('--line'); c.fillStyle = css('--muted'); c.textAlign = 'right';
+  const st = Math.max(1, Math.ceil((Math.floor(L1) - Math.ceil(L0) + 1) / 6));
+  for (let k = Math.ceil(L0); k <= Math.floor(L1); k += st) { const y = ys(10 ** k); c.beginPath(); c.moveTo(x0, y + .5); c.lineTo(x1, y + .5); c.stroke(); c.fillText(`1e${k}`, x0 - 6, y + 4); }
+  c.textAlign = 'center';
+  const mults = lx1 - lx0 < 2.5 ? [1, 2, 5] : [1];
+  for (let k = Math.floor(lx0); k <= Math.ceil(lx1); k++) for (const m of mults) { const v = m * 10 ** k; if (Math.log10(v) < lx0 - 1e-9 || Math.log10(v) > lx1 + 1e-9) continue; const x = xs(v); c.beginPath(); c.moveTo(x + .5, y0); c.lineTo(x + .5, y1); c.stroke(); c.fillText(v >= 1e6 ? +(v / 1e6).toPrecision(3) + ' GeV' : v >= 1e3 ? +(v / 1e3).toPrecision(3) + ' MeV' : +v.toPrecision(3) + ' keV', x, y1 + 16); }
+  c.save(); c.beginPath(); c.rect(x0, y0, x1 - x0, y1 - y0); c.clip();
+  const line = (arr, col, lw, dash) => { c.strokeStyle = col; c.lineWidth = lw; c.setLineDash(dash); c.beginPath(); let pen = false; arr.forEach((v, i) => { if (!(v > 0)) { pen = false; return; } const x = xs(E[i]), y = Math.max(y0 - 4, Math.min(y1 + 4, ys(v))); if (!pen) { c.moveTo(x, y); pen = true; } else c.lineTo(x, y); }); c.stroke(); c.setLineDash([]); c.lineWidth = 1; };
+  const names = Object.keys(comps);
+  if (S.pvComps && names.length > 1) names.forEach((k, i) => line(comps[k], PVCOL[i % PVCOL.length], 1.4, [5, 3]));
+  line(tot, css('--accent'), 2.4, []);
+  c.restore();
+  if (S.pvComps && names.length > 1) { c.textAlign = 'left'; c.font = '11px system-ui'; names.forEach((k, i) => { const a = comps[k]; let im = -1; a.forEach((v, j) => { if (v > 0 && (im < 0 || v > a[im])) im = j; }); if (im >= 0 && a[im] > lo) { c.fillStyle = PVCOL[i % PVCOL.length]; c.fillText(k, Math.min(x1 - 60, xs(E[im]) + 4), Math.max(y0 + 10, ys(a[im]) - 5)); } }); }
+  c.strokeStyle = css('--muted'); c.strokeRect(x0 + .5, y0 + .5, x1 - x0, y1 - y0);
+  const unit = { N: 'ph cm⁻² s⁻¹ keV⁻¹', F: 'keV cm⁻² s⁻¹ keV⁻¹', V: 'erg cm⁻² s⁻¹' }[mode];
+  const fe = v => v >= 1e6 ? v / 1e6 + ' GeV' : v >= 1e3 ? v / 1e3 + ' MeV' : v + ' keV';
+  box.querySelector('.pvr').textContent = `${PV_MODES[mode]} [${unit}] · ${fe(+E[0].toPrecision(3))} – ${fe(+E[E.length - 1].toPrecision(3))}` + (d.clipped.length ? ` · ${d.clipped.join(', ')} clipped to the template grid` : '');
+}
+addEventListener('resize', () => document.querySelectorAll('.ptable').forEach(drawPreview));
 function renderLatParams() {
   const box = $('#latptables'); if (!box) return;
   if (!$('#latparams').open) return;

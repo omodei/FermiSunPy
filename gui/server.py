@@ -116,6 +116,71 @@ def lc_data(fid, src, tmin, tmax, dt, sun_centered=False, roi=10.0):
     raise ValueError(f'Unknown source {src}')
 
 
+# ------------------------------------------------------------------ model preview (Parameters tables)
+PREVIEW = {'models': {}, 'lock': threading.Lock()}
+
+
+def _set_value(par, v):
+    """Set a parameter for the preview: clipped to a template grid, bounds widened otherwise."""
+    lo, hi = par.bounds
+    if (lo is not None and v < lo) or (hi is not None and v > hi):
+        par.bounds = (min(lo, v) if lo is not None else None, max(hi, v) if hi is not None else None)
+    par.value = v
+
+
+def model_preview(b):
+    """N(E) [ph cm-2 s-1 keV-1] of a joint-fit model (b['model']) or LAT model (b['lat']) and of its components,
+    evaluated at the given start values {comp.par: value}."""
+    from sunflare.params import HARD
+    emin, emax = float(b.get('emin', 10.0)), float(b.get('emax', 1e6))
+    n = min(int(b.get('n', 300)), 1000)
+    e = np.logspace(np.log10(emin), np.log10(emax), n)
+    vals = b.get('values') or {}
+    with PREVIEW['lock']:
+        if b.get('lat'):
+            kind = b['lat']
+            key = ('lat', kind)
+            if key not in PREVIEW['models']:
+                from sunflare import latfit
+                PREVIEW['models'][key] = latfit.lat_model(kind, 0.0, 0.0)
+            shape = PREVIEW['models'][key]['Sun'].spectrum.main.shape
+            clipped = []
+            for k, v in vals.items():
+                pn = k.split('.', 1)[-1]
+                if pn in shape.parameters:
+                    hard = HARD.get(('lat:' + kind, pn))
+                    if hard and not hard[0] <= v <= hard[1]:
+                        v = min(max(v, hard[0]), hard[1]); clipped.append(k)
+                    _set_value(shape.parameters[pn], float(v))
+            tot = shape(e)
+            comps = {}
+        else:
+            from sunflare.sunmodel import SunModel, ensure_templates
+            ensure_templates()
+            key = ('joint', b['model'], bool(b.get('link', True)))
+            if key not in PREVIEW['models']:
+                PREVIEW['models'][key] = SunModel(b['model'], link_line_index=bool(b.get('link', True)))
+            sm = PREVIEW['models'][key]
+            clipped = []
+            for k, v in vals.items():
+                c, _, pn = k.partition('.')
+                if c not in sm.components or (sm.linked and c == 'brd' and pn == 's'):
+                    continue
+                try:
+                    par = sm.par(c, pn)
+                except Exception:
+                    continue
+                hard = HARD.get((c, pn))
+                if hard and not hard[0] <= v <= hard[1]:
+                    v = min(max(v, hard[0]), hard[1]); clipped.append(k)
+                _set_value(par, float(v))
+            tot = sm.model[sm.source_name].spectrum.main.shape(e)
+            comps = {c: f(e) for c, f in zip(sm.components, sm.component_functions())} if sm.composite else {}
+    clean = lambda x: [None if not np.isfinite(v) or v <= 0 else float(f'{v:.5g}') for v in np.asarray(x, dtype=float)]
+    return {'E': [float(f'{v:.6g}') for v in e], 'total': clean(tot), 'comps': {k: clean(v) for k, v in comps.items()},
+            'clipped': clipped}
+
+
 # ------------------------------------------------------------------ flare summary
 def flare_summary(name):
     fid = common.normalize_name(name)
@@ -244,6 +309,8 @@ class Handler(BaseHTTPRequestHandler):
                     if k[0] == fid:
                         EV_CACHE.pop(k)
                 return self.send(200, {'id': start_job('fetch', fid, cmd), 'name': fid})
+            if method == 'POST' and p == '/api/model_preview':
+                return self.send(200, model_preview(self.body()))
             if method == 'POST' and p == '/api/lat_bins':
                 # Bayesian blocks of the Sun photons (same code as the LAT step), or rates of the given bins
                 b = self.body()
