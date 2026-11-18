@@ -322,3 +322,28 @@ def source_position(cfg):
     if cfg.get('sun_centered'):
         return 0.0, 0.0
     return float(cfg['info']['sun_ra']), float(cfg['info']['sun_dec'])
+
+
+INTERVAL_KEYS = ('spectral_intervals', 'LAT_TR_custom', 'LAT_integrated_interval', 'LOC_interval',
+                 'GBM_bkg_intervals', 'LLE_bkg_intervals')
+
+
+def full_window(info, cfg=None, fdir=None, extra=()):
+    """Time range (s from T0) covered by any data set or interval of the flare.
+
+    The download window (info tmin/tmax) bounds GOES and GBM, but the LAT files (imported or downloaded) and the
+    Sun track can extend beyond it, and so can the LAT bins and other intervals computed from them."""
+    lo, hi = float(info.get('tmin', DEFAULTS['DWNL_TMIN'])), float(info.get('tmax', DEFAULTS['DWNL_TMAX']))
+    ts = [t for w in info.get('lat_windows') or [] for t in w] + [t for iv in extra for t in iv]
+    for k in INTERVAL_KEYS:
+        v = (cfg or {}).get(k)
+        if not v:
+            continue
+        for iv in ([v] if not isinstance(v[0], (list, tuple)) else v):
+            ts += [float(x) for x in iv]
+    tr = load_json(os.path.join(fdir, 'lat_track.json')) if fdir else None
+    if tr and tr.get('t'):
+        ts += [tr['t'][0], tr['t'][-1]]
+    if ts:
+        lo, hi = min(lo, min(ts)), max(hi, max(ts))
+    return lo, hi

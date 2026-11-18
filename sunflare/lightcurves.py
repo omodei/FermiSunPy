@@ -148,7 +148,9 @@ def make(tmin, tmax, fname, dt=None, title=''):
 
 
 log('### STAGE: overview light curve')
-make(info['tmin'], info['tmax'], 'overview.png', title=f'{cfg.name}  {info.get("goes_class", "")}  — full data window')
+full = common.full_window(info, cfg, fdir)
+make(full[0], full[1], 'overview.png', title=f'{cfg.name}  {info.get("goes_class", "")}  — full data window'
+     + (f'  (GOES/GBM downloaded {info["tmin"]:g} to {info["tmax"]:g} s)' if full != (info['tmin'], info['tmax']) else ''))
 lo = cfg.lc_tmin if cfg.lc_tmin is not None else -600.0
 hi = cfg.lc_tmax if cfg.lc_tmax is not None else max(1800.0, (info.get('tend') or 1200.0) + 900.0)
 log(f'### STAGE: zoomed light curve ({lo:g} to {hi:g} s)')

@@ -148,7 +148,12 @@ def build_data(cfg, info, fdir, R, lat, events, log=print):
     lc = common.load_json(os.path.join(R, 'lightcurves', 'lightcurves.json'), {}) or {}
     t0 = datetime.datetime.fromisoformat(common.met2utc(info['T0']).replace('Z', '')).replace(tzinfo=datetime.timezone.utc)
     tend = info.get('tend') or 1800
-    D = {'name': cfg.name, 't0_ms': t0.timestamp() * 1000, 'tmin': info.get('tmin', -3600), 'tmax': info.get('tmax', 14400),
+    extra = [(r['t0'], r['t1']) for r in (lat or {}).get('resolved', [])]
+    if lat:
+        extra.append((lat['integrated']['t0'], lat['integrated']['t1']))
+    tmin, tmax = common.full_window(info, cfg, fdir, extra)
+    D = {'name': cfg.name, 't0_ms': t0.timestamp() * 1000, 'tmin': tmin, 'tmax': tmax,
+         'data_window': [info.get('tmin', -3600), info.get('tmax', 14400)],
          'flare': lc.get('zoom') or [-900, max(1800, tend + 1200)], 'windows': info.get('lat_windows', []),
          'loc': cfg.LOC_interval, 'zmax': cfg.zmax, 'thmax': cfg.LAT_VIS_THETA_MAX, 'tpeak': info.get('tpeak'),
          'latint': [lat['integrated']['t0'], lat['integrated']['t1']] if lat else cfg.LAT_integrated_interval,
@@ -447,6 +452,13 @@ function steps(c, g, bins, ys, col, lw = 1.3) {
 function overlays(c, g, p) {
   const C = COL(), band = (a, b, col, top, h = 5) => { const xa = Math.max(g.x0, g.xs(a)), xb = Math.min(g.x1, g.xs(b)); if (xb <= xa) return null; c.fillStyle = col; if (top) c.fillRect(xa, g.y0, xb - xa, h); else c.fillRect(xa, g.y0, xb - xa, g.y1 - g.y0); return [xa, xb]; };
   D.windows.forEach(w => band(w[0], w[1], C.vis));
+  if (['goes', 'nai', 'bgo'].includes(p.id) && D.data_window) {        // outside the GOES/GBM download window
+    const [da, db] = D.data_window;
+    for (const [a, b] of [[view.a, da], [db, view.b]]) {
+      const r = b > a ? band(a, b, 'rgba(128,128,140,.12)') : null;
+      if (r && r[1] - r[0] > 120) { c.fillStyle = css('--muted'); c.textAlign = 'center'; c.fillText('not downloaded', (r[0] + r[1]) / 2, (g.y0 + g.y1) / 2); }
+    }
+  }
   if (p.id === 'theta' && TR) { c.fillStyle = C.saa; for (let i = 0; i < TR.t.length - 1; i++) if (TR.saa[i]) { const xa = Math.max(g.x0, g.xs(TR.t[i])), xb = Math.min(g.x1, g.xs(TR.t[i + 1])); if (xb > xa) c.fillRect(xa, g.y0, xb - xa, g.y1 - g.y0); } }
   D.spectral.forEach((s, i) => {
     const r = band(s.a, s.b, C.spec); if (!r) return;

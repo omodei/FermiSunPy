@@ -121,7 +121,10 @@ def flare_summary(name):
     fid = common.normalize_name(name)
     d = common.flare_dir(fid)
     rep = os.path.join(d, 'results', 'report.html')
-    return dict(name=fid, exists=os.path.isdir(d), info=common.load_json(common.info_path(fid)),
+    info = common.load_json(common.info_path(fid))
+    if info:
+        info['tfull'] = list(common.full_window(info, common.load_json(common.config_path(fid), {}) or {}, d))
+    return dict(name=fid, exists=os.path.isdir(d), info=info,
                 state=common.load_json(common.config_path(fid)),
                 config=common.config_path(fid) if os.path.exists(common.config_path(fid)) else None,
                 report=os.path.exists(rep), report_time=os.path.getmtime(rep) if os.path.exists(rep) else None,

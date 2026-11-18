@@ -724,7 +724,13 @@ $('#logy').addEventListener('change', drawAll);
 const zoom = f => { const c = (S.view.tmin + S.view.tmax) / 2, h = (S.view.tmax - S.view.tmin) * f / 2; S.view = { tmin: c - h, tmax: c + h }; syncViewInputs(); loadLC(); };
 $('#zoomin').addEventListener('click', () => zoom(0.5)); $('#zoomout').addEventListener('click', () => zoom(2));
 $('#viewflare').addEventListener('click', () => { S.view = flareView(); syncViewInputs(); loadLC(); });
-$('#viewall').addEventListener('click', () => { S.view = { tmin: S.info.tmin, tmax: S.info.tmax }; syncViewInputs(); loadLC(); });
+$('#viewall').addEventListener('click', () => { const f = fullWindow(); S.view = { tmin: f[0], tmax: f[1] }; syncViewInputs(); loadLC(); });
+/* download window, LAT coverage and every interval (the LAT files and bins can extend past the GOES/GBM window) */
+function fullWindow() {
+  let [lo, hi] = S.info.tfull || [S.info.tmin, S.info.tmax];
+  for (const k of Object.values(IVKEYS)) for (const [a, b] of ivList(k)) { lo = Math.min(lo, a); hi = Math.max(hi, b); }
+  return [lo, hi];
+}
 
 /* ---------------------------------------------------------------- interval lists */
 function addInterval(key, iv) {
