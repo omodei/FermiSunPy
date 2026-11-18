@@ -107,6 +107,17 @@ Pipeline steps (also usable without the GUI):
 | report | `python -m sunflare.make_report <config>` | `report.html` |
 | all | `python -m sunflare.run_analysis <config> --steps lightcurves,localization,lat,spectral,report` | |
 
+**Interactive report figures.** The *Light curves* and *LAT likelihood* tabs of `report.html` embed the data at full
+resolution (GOES 1 s, GBM CSPEC native bins, LLE 1 s, every LAT photon, the time-resolved LAT fits) and draw them in
+the browser on one shared time axis: drag across a panel to zoom, Shift-drag to pan, ⌘/Ctrl + wheel or pinch to zoom
+around the cursor, double-click for the full window; preset buttons jump to the flare, the spectral intervals, the
+LAT bins or a visibility window. Curves are rebinned to the screen resolution and the y-axes rescale to the view.
+Panels can be resized (drag the lower edge), hidden, switched log/linear, and shown full screen; *Save PNG* exports
+the current view, *Copy link* gives a URL that reopens it (`report.html#lc&t=1300,1800`). Hovering shows the values of
+every panel, the LAT bin fit and the spectral-interval result; clicking a LAT point or a gold interval tab opens its
+results. *Filter events table* restricts the source-probability table to the zoomed time range. The static PNGs
+are kept under *Static figures* and used when printing.
+
 `--lat-ft1/--lat-ft2` and `--lle-dir` import files already on disk (e.g. weekly files, or when the LAT data server
 is down). The pion/NAR/BRD astromodels templates are built on first use from `solarflares/Sun/data`
 (override with `SUNFLARE_TEMPLATES`); flare data go to `flares/` (override with `SUNFLARE_DATA`).

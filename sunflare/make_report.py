@@ -13,7 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from sunflare import common  # noqa: E402
+from sunflare import common, report_plot  # noqa: E402
 
 cfg = common.load_config(sys.argv[1])
 info, fdir = cfg.info, cfg.pwd
@@ -57,9 +57,10 @@ def utc(t):
     return common.met2utc(info['T0'] + float(t))[11:19]
 
 
-def table(head, rows, cls=''):
+def table(head, rows, cls='', attrs=None):
     h = ''.join(f'<th>{x}</th>' for x in head)
-    b = ''.join('<tr>' + ''.join(f'<td>{c}</td>' for c in r) + '</tr>' for r in rows)
+    attrs = attrs or [''] * len(rows)
+    b = ''.join(f'<tr{a}>' + ''.join(f'<td>{c}</td>' for c in r) + '</tr>' for r, a in zip(rows, attrs))
     return f'<div class="tablebox"><table class="{cls}"><thead><tr>{h}</tr></thead><tbody>{b}</tbody></table></div>'
 
 
@@ -112,8 +113,11 @@ if info.get('warnings'):
 sections.append(('summary', 'Summary', summary_html))
 
 # ------------------------------------------------------------------ light curves
-h = img(os.path.join(R, 'lightcurves', 'zoom.png'), 'GOES, GBM, LAT light curves around the flare (yellow: spectral intervals, green: LAT Sun visibility)')
-h += img(os.path.join(R, 'lightcurves', 'overview.png'), 'Full data window')
+h = report_plot.figure('fig-lc', ['goes', 'nai', 'bgo', 'lle', 'lat', 'theta', 'flux', 'par', 'ts'], 'Light curves')
+st = (img(os.path.join(R, 'lightcurves', 'zoom.png'), 'GOES, GBM, LAT light curves around the flare (yellow: spectral intervals, green: LAT Sun visibility)')
+      + img(os.path.join(R, 'lightcurves', 'overview.png'), 'Full data window'))
+if st:
+    h += f'<details class="static"><summary>Static figures (used when printing)</summary>{st}</details>'
 if lc.get('peaks'):
     h += '<h3>Peak times</h3>' + table(['Band', 'Peak (UTC)', 'T − T0 [s]'],
                                        [[E(k), utc(v), f'{v:.0f}'] for k, v in lc['peaks'].items()])
@@ -146,15 +150,20 @@ if loc:
 
 # ------------------------------------------------------------------ LAT likelihood
 if lat:
-    h = img(os.path.join(R, 'lat', 'lat_lightcurve.png'), 'LAT time-resolved likelihood: flux, spectral parameter and TS')
+    h = report_plot.figure('fig-lat', ['goes', 'lat', 'flux', 'par', 'ts'], 'LAT time-resolved likelihood')
+    st = img(os.path.join(R, 'lat', 'lat_lightcurve.png'), 'LAT time-resolved likelihood: flux, spectral parameter and TS')
+    if st:
+        h += f'<details class="static"><summary>Static figure (used when printing)</summary>{st}</details>'
     band = f'{lat["flux_band_MeV"][0]:g}–{lat["flux_band_MeV"][1]:g} MeV'
 
-    def rows_for(rs):
+    def rows_for(rs, attrs=None):
         out = []
         for r in rs:
             for k, f in r['fits'].items():
                 if 'TS' not in f:
                     out.append([f'{utc(r["t0"])}–{utc(r["t1"])}', E(k), '–', '–', E(f.get('error', 'failed')), '–'])
+                    if attrs is not None:
+                        attrs.append(f' data-bin="{r["t0"]:.3f}"')
                     continue
                 fixed = {x[0] for x in f.get('fixed', [])}
                 par = '; '.join(f'{p} = {fmt(v[0])} <span class="err">(fixed)</span>' if p in fixed else f'{p} = {pm(*v)}'
@@ -169,6 +178,8 @@ if lat:
                     flux = f'&lt; {fmt(f.get("flux_ul"))} <span class="err">(95% UL)</span>'
                 out.append([f'{utc(r["t0"])}–{utc(r["t1"])}<br><span class="err">{r["t0"]:.0f}–{r["t1"]:.0f} s</span>',
                             E(k) + (' ★' if r.get('best') == k else ''), f'{f["TS"]:.1f}', flux, par, f'{f["logL"]:.2f}'])
+                if attrs is not None:
+                    attrs.append(f' data-bin="{r["t0"]:.3f}"')
         return out
     head = ['Interval (UTC)', 'Model', 'TS', f'Flux {band} [ph cm⁻² s⁻¹]', 'Parameters', 'log L']
     h += '<h3>Time-integrated</h3>' + table(head, rows_for([lat['integrated']]))
@@ -186,7 +197,8 @@ if lat:
                                                          for a, b in o.items())) for k, o in lat['param_overrides'].items()))
     if notes:
         h += '<p class="muted">' + '. '.join(n[0].upper() + n[1:] for n in notes) + '.</p>'
-    h += table(head, rows_for(lat['resolved']))
+    bin_attrs = []
+    h += table(head, rows_for(lat['resolved'], bin_attrs), attrs=bin_attrs)
     from sunflare.lat_events import load_or_extract
     EVENTS = load_or_extract(cfg, log=lambda *a: print(*a, flush=True)) or []
     if EVENTS:
@@ -211,7 +223,7 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
     S = common.load_json(s)
     d = os.path.dirname(s)
     a, b = S['interval']
-    spec_h += f'<section class="spec"><h3>{a:g} – {b:g} s &nbsp;<span class="muted">({utc(a)} – {utc(b)} UTC)</span></h3>'
+    spec_h += f'<section class="spec" id="{report_plot.spec_id(a, b)}"><h3>{a:g} – {b:g} s &nbsp;<span class="muted">({utc(a)} – {utc(b)} UTC)</span></h3>'
     spec_h += f'<p class="muted">Data: {E(", ".join(S["plugins"]))}'
     if S.get('chain_intervals'):
         spec_h += ' · each model starts from its best fit in the previous interval'
@@ -305,6 +317,7 @@ th.sort[aria-sort="ascending"]::after {{ content:" ▲"; color:var(--accent) }} 
 .pbar i b {{ position:absolute; inset:0 auto 0 0; background:var(--accent) }}
 tr.hi td {{ background:var(--accent-soft) }}
 .evctl {{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:14px }}
+@@PLOTCSS@@
 .evctl input[type=number] {{ width:84px; font:13px ui-monospace,Menlo,monospace; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg) }}
 .evbtn {{ font:500 13px system-ui; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg); cursor:pointer; margin-left:auto }}
 </style></head><body>
@@ -315,10 +328,11 @@ tr.hi td {{ background:var(--accent-soft) }}
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {{
   document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab').forEach(s => s.hidden = s.id !== 't-' + b.dataset.t);
-  try {{ history.replaceState(null, '', '#' + b.dataset.t); }} catch (e) {{}}
+  try {{ history.replaceState(null, '', '#' + b.dataset.t + (window.LCVIEW ? '&' + window.LCVIEW.hashPart() : '')); }} catch (e) {{}}
 }}));
-EVJS
-const h = location.hash.slice(1); const tb = document.querySelector(`nav button[data-t="${{h}}"]`); if (tb) tb.click();
+@@EVJS@@
+@@LCJS@@
+const h = location.hash.slice(1).split('&')[0]; const tb = document.querySelector(`nav button[data-t="${{h}}"]`); if (tb) tb.click();
 </script></body></html>'''
 EVJS = r'''
 /* LAT events (gtsrcprob): filters + sortable table, as in the GRBAnalyzer report */
@@ -346,7 +360,7 @@ function evRows() {
 function evRender() {
   const rows = evRows();
   const head = '<thead><tr><th>#</th>' + EVCOLS.map(([k, l]) => `<th class="sort" data-k="${k}" aria-sort="${evSort.key === k ? (evSort.dir > 0 ? 'ascending' : 'descending') : 'none'}">${l}</th>`).join('') + '</tr></thead>';
-  const body = rows.map((r, i) => `<tr class="${(r.pSun ?? 0) >= 0.9 && r.E >= 1000 ? 'hi' : ''}"><td class="num">${i + 1}</td>` + EVCOLS.map(([k, , f, t]) => `<td class="${t ? '' : 'num'}">${f(r)}</td>`).join('') + '</tr>').join('');
+  const body = rows.map((r, i) => `<tr data-t="${r.t}" data-e="${r.E}" class="${(r.pSun ?? 0) >= 0.9 && r.E >= 1000 ? 'hi' : ''}"><td class="num">${i + 1}</td>` + EVCOLS.map(([k, , f, t]) => `<td class="${t ? '' : 'num'}">${f(r)}</td>`).join('') + '</tr>').join('');
   $e('#evtable').innerHTML = head + '<tbody>' + body + '</tbody>';
   const n90 = rows.filter(r => (r.pSun ?? 0) >= 0.9).length;
   $e('#evcount').textContent = `${rows.length} of ${EV.length} events shown · ${n90} with P(Sun) ≥ 0.9 · highlighted: P(Sun) ≥ 0.9 and E ≥ 1 GeV`;
@@ -367,7 +381,9 @@ if (EV.length && $e('#evtable')) {
   evRender();
 }
 '''.replace('EVDATA', json.dumps(EVENTS).replace('</', '<\\/')).replace('FLARENAME', cfg.name)
-page = page.replace('EVJS', EVJS, 1)
+page = page.replace('@@EVJS@@', EVJS, 1)
+LCD = report_plot.build_data(cfg, info, fdir, R, lat, EVENTS, log=lambda *a: print(*a, flush=True))
+page = page.replace('@@PLOTCSS@@', report_plot.CSS, 1).replace('@@LCJS@@', report_plot.script(LCD), 1)
 out = os.path.join(R, 'report.html')
 os.makedirs(R, exist_ok=True)
 with open(out, 'w') as f:
