@@ -20,10 +20,10 @@ ALL = list(STEPS)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('config')
-ap.add_argument('--steps', default=','.join(ALL))
+ap.add_argument('--steps', default=None, help='default: run_steps saved in the config, else all steps')
 args = ap.parse_args()
 cfg = common.load_config(args.config)
-steps = [s for s in args.steps.split(',') if s in STEPS]
+steps = [s for s in (args.steps.split(',') if args.steps else (cfg.run_steps or ALL)) if s in STEPS]
 if not cfg.info.get('has_lat') or not cfg.use_lat:
     steps = [s for s in steps if s not in ('localization', 'lat')]
 if not cfg.do_localization and 'localization' in steps:

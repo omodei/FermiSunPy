@@ -161,6 +161,8 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
     <div class="field" style="width:min(320px,100%)"><label for="flarename">Open a downloaded flare</label>
       <select id="flarename"><option value="">—</option></select></div>
     <button id="openbtn" style="align-self:end">Open</button>
+    <button id="loadcfgbtn" style="align-self:end" title="Open a config_SOL….json file: restores the flare, every setting, interval, model and the run steps">Load configuration…</button>
+    <input type="file" id="loadcfg" accept=".json,application/json" hidden>
   </div>
   <div class="sub">
     <h3>New flare</h3>
@@ -182,6 +184,12 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
       <div class="field"><label for="n-tmin">Data from T0 + (s)</label><input type="number" id="n-tmin" value="-3600"></div>
       <div class="field"><label for="n-tmax">to T0 + (s)</label><input type="number" id="n-tmax" value="14400"><small>long-duration emission can last hours</small></div>
     </div>
+    <details id="n-local"><summary>Use local LAT / LLE files instead of downloading them (optional)</summary>
+      <div class="grid-form" style="margin-top:10px">
+        <div class="field"><label for="n-ft1">LAT FT1 file</label><input type="text" class="mono" id="n-ft1" placeholder="/path/gll_ft1_….fit"></div>
+        <div class="field"><label for="n-ft2">LAT FT2 file</label><input type="text" class="mono" id="n-ft2" placeholder="/path/gll_ft2_….fit"></div>
+        <div class="field"><label for="n-lle">LLE directory</label><input type="text" class="mono" id="n-lle" placeholder="/path/with/gll_lle_bn…fit"></div>
+      </div></details>
     <div class="row">
       <label class="row" style="gap:6px"><input type="checkbox" id="n-sun"> Also make Sun-centred LAT files (FermiSunPy suncenter)</label>
       <button class="primary" id="fetchbtn">Download data</button>
@@ -292,11 +300,6 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
   <div class="mlist" id="modellist"></div>
   <details><summary>Presets</summary><div class="row" id="presets" style="margin-top:10px"></div></details>
   <h3>Data in the joint fit</h3>
-  <div class="row" style="gap:18px">
-    <label class="row" style="gap:6px"><input type="checkbox" id="f-spec_use_nai" data-key="spec_use_nai" data-type="bool"> Use GBM NaI</label>
-    <label class="row" style="gap:6px"><input type="checkbox" id="f-spec_use_bgo" data-key="spec_use_bgo" data-type="bool"> Use GBM BGO</label>
-    <span class="hint" id="specdata"></span>
-  </div>
   <div class="grid-form">
     <div class="field"><label for="f-GBM_NAI_EMIN_KEV">NaI from (keV)</label><input type="number" id="f-GBM_NAI_EMIN_KEV" data-key="GBM_NAI_EMIN_KEV" step="any"></div>
     <div class="field"><label for="f-GBM_NAI_EMAX_KEV">NaI to (keV)</label><input type="number" id="f-GBM_NAI_EMAX_KEV" data-key="GBM_NAI_EMAX_KEV" step="any"></div>
@@ -326,6 +329,7 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
   <div id="checks" class="hint"></div>
   <div class="row">
     <button id="savebtn">Save config</button>
+    <a id="cfgdl" href="#" hidden><button type="button" title="Download config_SOL….json: everything needed to reproduce this setup and run (load it with Load configuration…)">Download configuration</button></a>
     <button class="primary" id="runbtn">Run analysis</button>
     <button class="danger" id="stopbtn" hidden>Stop</button>
     <a id="reportlink" href="#" target="_blank" rel="noopener" hidden><button class="primary" type="button">Open report</button></a>
@@ -402,7 +406,8 @@ $('#searchbtn').addEventListener('click', async () => {
 });
 $('#fetchbtn').addEventListener('click', async () => {
   const t0 = $('#n-t0').value.trim(); if (!/^\d{4}-\d\d-\d\d[ T]\d\d:\d\d(:\d\d)?$/.test(t0)) return toast('Write T0 as YYYY-MM-DD HH:MM:SS (UTC)', true);
-  const body = { t0, tend: $('#n-tend').value.trim(), peak: $('#n-peak').value.trim(), goes_class: $('#n-class').value.trim(), location: $('#n-loc').value.trim(), ar: $('#n-ar').value.trim(), tmin: +$('#n-tmin').value, tmax: +$('#n-tmax').value, sun_centered: $('#n-sun').checked };
+  const body = { t0, tend: $('#n-tend').value.trim(), peak: $('#n-peak').value.trim(), goes_class: $('#n-class').value.trim(), location: $('#n-loc').value.trim(), ar: $('#n-ar').value.trim(), tmin: +$('#n-tmin').value, tmax: +$('#n-tmax').value, sun_centered: $('#n-sun').checked,
+    lat_ft1: $('#n-ft1').value.trim(), lat_ft2: $('#n-ft2').value.trim(), lle_dir: $('#n-lle').value.trim() };
   if (body.tmax <= body.tmin) return toast('The data window is empty', true);
   try { const j = await api('/api/fetch', body); followFetch(j.id, j.name); } catch (e) { toast(e.message, true); }
 });
@@ -412,23 +417,61 @@ function followFetch(id, name) {
   poll(id, $('#fetchlog'), null, async st => {
     $('#fetchbtn').disabled = false; $('#fetchstop').hidden = true;
     S.meta = await api('/api/meta'); fillFlares();
-    if (st.returncode === 0) { toast('Data downloaded'); $('#flarename').value = name; openFlare(); } else toast('Download failed; see the log', true);
+    if (st.returncode === 0) {
+      toast('Data downloaded'); $('#flarename').value = name;
+      const pend = S.pendingCfg && S.pendingCfg.name === name ? S.pendingCfg : null; S.pendingCfg = null;
+      openFlare(pend);
+    } else toast('Download failed; see the log', true);
   });
 }
 
+/* ---------------------------------------------------------------- load a configuration file */
+$('#loadcfgbtn').addEventListener('click', () => $('#loadcfg').click());
+$('#loadcfg').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  let c;
+  try { c = JSON.parse(await f.text()); } catch (err) { return toast(`${f.name} is not a JSON file: ${err.message}`, true); }
+  if (!c || !/^SOL\d{8}_\d{4}$/.test(c.name || '')) return toast(`${f.name} is not a flare configuration (no "name" like SOL20170910_1535)`, true);
+  const unknown = Object.keys(c).filter(k => !(k in S.meta.defaults) && !['name', 'written', 'flare', 'provenance', 'run_steps'].includes(k));
+  if (S.meta.flares.some(x => x.name === c.name)) {
+    $('#flarename').value = c.name;
+    await openFlare(c);
+    toast(`Loaded ${f.name}: settings applied to ${c.name}. Review, then Save or Run.` + (unknown.length ? ` Ignored: ${unknown.join(', ')}` : ''));
+    return;
+  }
+  const F = c.flare;
+  if (!F || !F.t0_utc) return toast(`${c.name} has no data on this computer and the file has no flare definition to download it`, true);
+  $('#n-t0').value = F.t0_utc || ''; $('#n-tend').value = F.tend_utc || ''; $('#n-peak').value = F.peak_utc || '';
+  $('#n-class').value = F.goes_class || ''; $('#n-loc').value = F.location || ''; $('#n-ar').value = F.ar || '';
+  if (F.tmin != null) $('#n-tmin').value = F.tmin;
+  if (F.tmax != null) $('#n-tmax').value = F.tmax;
+  $('#n-sun').checked = !!(F.sun_centered_files || c.sun_centered);
+  $('#n-ft1').value = F.lat_ft1 || ''; $('#n-ft2').value = F.lat_ft2 || ''; $('#n-lle').value = F.lle_dir || '';
+  $('#n-local').open = !!(F.lat_ft1 || F.lle_dir);
+  S.pendingCfg = c;
+  $('#fetchbtn').scrollIntoView({ block: 'center' });
+  toast(`${c.name} is not on this computer yet: the New flare form is filled in. Press Download data; the configuration is applied when the download finishes.`);
+});
+function setRunSteps(steps) {
+  const all = !Array.isArray(steps) || !steps.length;      // older configs: every step
+  document.querySelectorAll('[data-step-run]').forEach(c => c.checked = all || steps.includes(c.dataset.stepRun));
+}
+
 /* ---------------------------------------------------------------- open flare */
-$('#openbtn').addEventListener('click', openFlare);
-async function openFlare() {
+$('#openbtn').addEventListener('click', () => openFlare());
+async function openFlare(override) {
   const name = $('#flarename').value; if (!name) return toast('Choose a flare', true);
   try {
     const b = await api('/api/flare?name=' + encodeURIComponent(name));
     if (!b.info) { const fj = b.jobs.find(j => j.kind === 'fetch' && j.running); if (fj) return followFetch(fj.id, b.name); return toast('This flare has no data yet: download it first', true); }
     S.fid = b.name; S.info = b.info; try { localStorage.setItem('sfc-last', b.name); } catch {}
-    S.cfg = Object.assign(defaultsFrom(b.info), b.state || {}); S.cfg.name = b.name;
+    S.cfg = Object.assign(defaultsFrom(b.info), override || b.state || {}); S.cfg.name = b.name;
+    setRunSteps(S.cfg.run_steps);
     renderInfo(); renderDetectors(); renderSettings(); renderComponents(); renderModels(); renderLatModels(); renderIntervals(); renderRun(b);
     lockAll(false);
     fillDetSelects(); S.view = flareView(); syncViewInputs(); buildPanels(); loadLC();
-    setSaved(b.config ? 'Config on disk' : 'Not saved yet');
+    setSaved(override ? 'Configuration loaded from file (not saved yet)' : b.config ? 'Config on disk' : 'Not saved yet');
+    if (override) { S.dirty = true; checks(); }
     const rj = b.jobs.find(j => j.kind === 'analysis' && j.running); if (rj) followRun(rj.id);
   } catch (e) { toast(e.message, true); }
 }
@@ -474,7 +517,7 @@ function renderDetectors() {
     const d = c.dataset.det, L = S.cfg.GBM_detectors;
     if (c.checked && !L.includes(d)) L.push(d); if (!c.checked) L.splice(L.indexOf(d), 1);
     L.sort((a, b) => (a[0] === 'b') - (b[0] === 'b') || a.localeCompare(b));
-    renderDetectors(); fillDetSelects(); loadLC(); specData(); changed();
+    renderDetectors(); fillDetSelects(); loadLC(); changed();
   }));
 }
 function fillDetSelects() {
@@ -666,7 +709,6 @@ $$('[data-add]').forEach(b => b.addEventListener('click', () => { const c = (S.v
 /* ---------------------------------------------------------------- settings */
 function renderSettings() {
   for (const el of $$('[data-key]')) { const v = S.cfg[el.dataset.key]; if (el.type === 'checkbox') el.checked = !!v; else el.value = v ?? ''; }
-  specData();
   $('#f-use_lle').disabled = !S.info.has_lle; $('#f-use_lat').disabled = !S.info.has_lat; $('#f-spec_use_lat').disabled = !S.info.has_lat; $('#f-use_gbm').disabled = !S.info.has_gbm;
 }
 for (const el of $$('[data-key]')) el.addEventListener('change', () => {
@@ -675,7 +717,6 @@ for (const el of $$('[data-key]')) el.addEventListener('change', () => {
   if (k === 'use_lle' || k === 'use_lat') { buildPanels(); loadLC(); renderIntervals(); }
   if (k === 'sun_centered' || k === 'roi') { loadLC(); if (k === 'sun_centered' && S.cfg.sun_centered && !S.info.has_lat_sun) toast('Sun-centred FT1/FT2 will be created at the start of the LAT steps'); }
   if (k === 'zmax') drawAll();
-  specData();
   changed();
 });
 $('#resetdefaults').addEventListener('click', () => {
@@ -683,23 +724,6 @@ $('#resetdefaults').addEventListener('click', () => {
   for (const k of ['irfs', 'roi', 'zmax', 'thetamax', 'strategy', 'LAT_EMIN_MEV', 'LAT_EMAX_MEV', 'FLUX_EMIN_MEV', 'FLUX_EMAX_MEV', 'LAT_TS_MIN', 'LOC_EMIN_MEV', 'LOC_HALF_SIZE', 'LOC_NSIDE', 'LAT_TR_method', 'LAT_TR_bb_p0', 'LAT_TR_N', 'LAT_TR_models']) S.cfg[k] = structuredClone(d[k]);
   renderSettings(); renderLatModels(); changed(); toast('LAT settings restored to defaults');
 });
-function fitInstruments() {
-  const c = S.cfg, I = S.info, out = [];
-  if (c.use_gbm && I.has_gbm) {
-    const d = c.GBM_detectors.filter(x => (x[0] === 'n' && c.spec_use_nai) || (x[0] === 'b' && c.spec_use_bgo));
-    out.push(...d);
-  }
-  if (c.use_lle && I.has_lle) out.push('LLE');
-  if (c.spec_use_lat && c.use_lat && I.has_lat) out.push('LAT');
-  return out;
-}
-function specData() {
-  ['GBM_NAI_EMIN_KEV', 'GBM_NAI_EMAX_KEV'].forEach(k => $('#f-' + k).disabled = !S.cfg.spec_use_nai || !S.cfg.use_gbm);
-  ['GBM_BGO_EMIN_KEV', 'GBM_BGO_EMAX_KEV'].forEach(k => $('#f-' + k).disabled = !S.cfg.spec_use_bgo || !S.cfg.use_gbm);
-  $('#f-spec_use_nai').disabled = $('#f-spec_use_bgo').disabled = !S.cfg.use_gbm || !S.info.has_gbm;
-  const f = fitInstruments();
-  $('#specdata').textContent = f.length ? 'Fitted together: ' + f.join(', ') : 'No data selected for the joint fit';
-}
 function renderLatModels() {
   $('#latmodels').innerHTML = '<span class="lab">LAT spectral models:</span>' + Object.entries(S.meta.lat_models).map(([k, lab]) => `<label class="row" style="gap:6px"><input type="checkbox" data-latm="${k}" ${S.cfg.LAT_TR_models.includes(k) ? 'checked' : ''}> ${esc(lab)}</label>`).join('');
   $$('[data-latm]').forEach(c => c.addEventListener('change', () => { const k = c.dataset.latm; S.cfg.LAT_TR_models = S.cfg.LAT_TR_models.filter(x => x !== k); if (c.checked) S.cfg.LAT_TR_models.push(k); changed(); }));
@@ -729,9 +753,8 @@ function setSaved(t) { $('#savedstate').textContent = `${S.fid ? S.fid + ' · ' 
 function problems() {
   const c = S.cfg, p = [];
   if (c.spectral_intervals.length) {
-    const fit = fitInstruments(), gbmFit = fit.some(x => /^[nb]/.test(x) && x !== 'LLE' && x !== 'LAT');
-    if (!fit.length) p.push('select at least one instrument for the joint fit (NaI, BGO, LLE or LAT)');
-    if (gbmFit && !c.GBM_bkg_intervals.length) p.push('add a GBM background interval');
+    if (c.use_gbm && !c.GBM_detectors.length) p.push('choose GBM detectors (or switch GBM off)');
+    if (c.use_gbm && !c.GBM_bkg_intervals.length) p.push('add a GBM background interval');
     if (c.use_lle && S.info.has_lle && !c.LLE_bkg_intervals.length) p.push('add an LLE background interval (or switch LLE off)');
     if (!c.spectral_models.length) p.push('add at least one spectral model');
     for (const [a, b] of c.spectral_intervals) for (const [x, y] of c.GBM_bkg_intervals) if (a < y && b > x) { p.push(`spectral interval ${a}–${b} s overlaps the GBM background ${x}–${y} s`); break; }
@@ -745,9 +768,14 @@ function markSteps() {
   const c = S.cfg, ok = { flare: !!S.info, det: c && c.GBM_detectors.length > 0, int: c && (c.spectral_intervals.length || c.LOC_interval), lat: !!c && c.use_lat, spec: c && c.spectral_models.length, run: false };
   $$('#steps a').forEach(a => { a.classList.toggle('ok', !!ok[a.dataset.step]); a.setAttribute('aria-disabled', a.dataset.step !== 'flare' && !S.info); });
 }
-function cfgPayload() { const c = structuredClone(S.cfg); c.name = S.fid; return c; }
+function cfgPayload() {
+  const c = structuredClone(S.cfg); c.name = S.fid;
+  c.run_steps = [...document.querySelectorAll('[data-step-run]')].filter(x => x.checked).map(x => x.dataset.stepRun);
+  delete c.flare; delete c.provenance; delete c.written;      // written by the server from flare_info.json
+  return c;
+}
 $('#savebtn').addEventListener('click', async () => {
-  try { const r = await api('/api/config', cfgPayload()); S.dirty = false; setSaved('Config saved'); $('#cfgfile').textContent = r.path.replace(/^.*\/(flares\/)/, '$1'); $('#cfgpreview').textContent = r.text; toast('Saved ' + r.path.split('/').pop()); }
+  try { const r = await api('/api/config', cfgPayload()); S.dirty = false; setSaved('Config saved'); $('#cfgdl').href = '/api/config_file?name=' + S.fid; $('#cfgdl').hidden = false; $('#cfgfile').textContent = r.path.replace(/^.*\/(flares\/)/, '$1'); $('#cfgpreview').textContent = r.text; toast('Saved ' + r.path.split('/').pop()); }
   catch (e) { toast(e.message, true); }
 });
 $('#runbtn').addEventListener('click', async () => {
@@ -760,6 +788,7 @@ $('#runbtn').addEventListener('click', async () => {
 function renderRun(b) {
   $('#cfgfile').textContent = b.config ? b.config.replace(/^.*\/(flares\/)/, '$1') : 'config not saved yet';
   $('#reportlink').href = '/report/' + b.name; $('#reportlink').hidden = !b.report;
+  $('#cfgdl').href = '/api/config_file?name=' + b.name; $('#cfgdl').hidden = !b.config;
   $('#reporttime').textContent = b.report ? 'Report from ' + new Date(b.report_time * 1000).toLocaleString() : '';
   const st = (b.status && b.status.steps) || {}; stages(Object.keys(st).length ? st : null);
   checks(); markSteps();
@@ -804,6 +833,7 @@ function poll(id, pre, onLine, onEnd) {
   };
   tick();
 }
+document.querySelectorAll('[data-step-run]').forEach(c => c.addEventListener('change', () => { if (S.cfg) changed(); }));
 window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 </script>
 </body>

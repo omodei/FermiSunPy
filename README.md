@@ -80,8 +80,13 @@ conda activate FermiSunPy        # needs fermitools, threeML, astromodels and su
 5. **Spectral models**: build models from components — `pow_le`, `exp_co_le`, `pow_he`, `exp_co_he`
    (bremsstrahlung continua), `nar`, `brd` (narrow/broad nuclear de-excitation line templates), `g_2p2MeV`,
    `g_511keV`, `g_1p7MeV` (lines), `pion` (pion-decay template) — e.g. `exp_co_le+nar+brd+g_2p2MeV+pion`.
-   *Data in the joint fit* switches NaI, BGO, LLE and LAT in or out independently (e.g. LLE + LAT only).
 6. **Run & report**: writes `config_<flare>.json`, runs the steps and builds `results/report.html`.
+
+**Reproducing a setup:** `config_<flare>.json` holds every setting, interval, model and the chosen run steps, plus
+the flare definition used for the download (T0, end, peak, class, window, Sun-centred files, local FT1/FT2/LLE
+paths) and the software versions. *Download configuration* saves it; *Load configuration…* restores it: for a flare
+already on disk it applies the settings (review, then Save or Run); otherwise it fills the New-flare form and applies
+the configuration once *Download data* finishes. `python -m sunflare.run_analysis <config>` runs the saved steps.
 
 Pipeline steps (also usable without the GUI):
 

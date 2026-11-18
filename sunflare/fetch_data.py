@@ -206,6 +206,7 @@ if 'lle' not in skip:
     log('### STAGE: lle  (LAT Low Energy data of the GBM triggers, if any)')
     info['has_lle'] = False
     if args.lle_dir:
+        info['lle_source'] = os.path.abspath(args.lle_dir)
         import shutil
         os.makedirs('LLE_data', exist_ok=True)
         for f in glob.glob(os.path.join(args.lle_dir, 'gll_lle_bn*.fit')) + glob.glob(os.path.join(args.lle_dir, 'gll_pt_bn*.fit')) + \
@@ -245,6 +246,7 @@ if 'lat' not in skip:
             info['lat_name'] = lat_data.import_local(os.path.abspath(args.lat_ft1), os.path.abspath(args.lat_ft2),
                                                      info['sun_ra'], info['sun_dec'], T0, args.tmin, args.tmax, repo)
             info['lat_source'] = os.path.abspath(args.lat_ft1)
+            info['lat_source_ft2'] = os.path.abspath(args.lat_ft2)
         else:
             info['lat_name'] = lat_data.download(info['sun_ra'], info['sun_dec'], T0, args.tmin, args.tmax, repo,
                                                  radius=args.lat_radius)

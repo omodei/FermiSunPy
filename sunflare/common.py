@@ -30,8 +30,6 @@ DEFAULTS = {
     'DWNL_TMAX': 14400.0,
     # GBM
     'use_gbm': True,
-    'spec_use_nai': True,         # NaI detectors in the joint spectral fit
-    'spec_use_bgo': True,         # BGO detectors in the joint spectral fit
     'GBM_detectors': [],
     'GBM_bkg_intervals': [],
     'GBM_bkg_poly_order': -1,
@@ -226,9 +224,7 @@ def write_config(cfg):
     for k in ('LOC_interval', 'LAT_integrated_interval'):
         v = c.get(k)
         c[k] = [float(v[0]), float(v[1])] if v and float(v[1]) > float(v[0]) else None
-    gbm_in_fit = c['use_gbm'] and any((d[0] == 'n' and c['spec_use_nai']) or (d[0] == 'b' and c['spec_use_bgo'])
-                                      for d in c.get('GBM_detectors') or [])
-    if c['spectral_intervals'] and gbm_in_fit and not c['GBM_bkg_intervals']:
+    if c['spectral_intervals'] and c['use_gbm'] and c.get('GBM_detectors') and not c['GBM_bkg_intervals']:
         raise ValueError('The joint spectral fit needs at least one GBM background interval')
     if c['use_lle'] and c['spectral_intervals'] and not c['LLE_bkg_intervals']:
         raise ValueError('Select at least one LLE background interval, or switch LLE off')
@@ -241,9 +237,40 @@ def write_config(cfg):
         raise ValueError(f'Unknown LAT model(s) {bad}')
     c['name'] = fid
     c['written'] = datetime.datetime.now().isoformat(timespec='seconds')
+    info = load_json(info_path(fid), {}) or {}
+    if info:
+        c['flare'] = flare_definition(info)
+    c['provenance'] = provenance()
     path = config_path(fid)
     save_json(path, c)
     return path
+
+
+def flare_definition(info):
+    """What fetch_data needs to download the same data again (stored in the config file)."""
+    from_t0 = lambda k: (met2utc(info['T0'] + float(info[k]))[:19] if info.get(k) is not None else None)
+    return {'t0_utc': info.get('t0_utc'), 'tend_utc': from_t0('tend'), 'peak_utc': from_t0('tpeak'),
+            'goes_class': info.get('goes_class'), 'location': info.get('location'), 'ar': info.get('ar'),
+            'tmin': info.get('tmin'), 'tmax': info.get('tmax'), 'sun_centered_files': bool(info.get('has_lat_sun')),
+            'lat_ft1': info.get('lat_source'), 'lat_ft2': info.get('lat_source_ft2'), 'lle_dir': info.get('lle_source')}
+
+
+def provenance():
+    """Software versions and the FermiSunPy commit, to reproduce a run."""
+    import subprocess
+    from importlib import metadata
+    out = {}
+    for pkg in ('threeML', 'astromodels', 'fermitools', 'sunpy', 'astropy', 'numpy'):
+        try:
+            out[pkg] = metadata.version(pkg)
+        except Exception:
+            pass
+    try:
+        out['FermiSunPy_commit'] = subprocess.run(['git', '-C', REPO, 'rev-parse', '--short', 'HEAD'],
+                                                  capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        pass
+    return out
 
 
 def settings_hash(d):

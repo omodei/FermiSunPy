@@ -201,6 +201,15 @@ class Handler(BaseHTTPRequestHandler):
             if method == 'GET' and p == '/api/config_text':
                 fid = common.normalize_name(q['name'])
                 return self.send(200, {'path': common.config_path(fid), 'text': open(common.config_path(fid)).read()})
+            if method == 'GET' and p == '/api/config_file':
+                fid = common.normalize_name(q['name'])
+                body = open(common.config_path(fid), 'rb').read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Disposition', f'attachment; filename="config_{fid}.json"')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
             if method == 'GET' and p == '/api/job':
                 return self.send(200, job_status(q['id'], int(q.get('offset', 0))))
             if method == 'POST' and p == '/api/job/stop':
@@ -216,6 +225,13 @@ class Handler(BaseHTTPRequestHandler):
                         cmd += [flag, str(b[k])]
                 if b.get('sun_centered'):
                     cmd.append('--sun-centered')
+                for k, flag in (('lat_ft1', '--lat-ft1'), ('lat_ft2', '--lat-ft2'), ('lle_dir', '--lle-dir')):
+                    if b.get(k):
+                        if not os.path.exists(os.path.expanduser(b[k])):
+                            raise FileNotFoundError(f'{b[k]} does not exist')
+                        cmd += [flag, os.path.expanduser(b[k])]
+                if bool(b.get('lat_ft1')) != bool(b.get('lat_ft2')):
+                    raise ValueError('Give both the local FT1 and FT2 files, or neither')
                 os.makedirs(common.flare_dir(fid), exist_ok=True)
                 for k in list(EV_CACHE):
                     if k[0] == fid:

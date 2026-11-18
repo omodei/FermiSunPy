@@ -45,12 +45,7 @@ dets = [d for d in cfg.GBM_detectors if any(x['det'] == d and x.get('rsp') for x
     if cfg.use_gbm else []
 if cfg.use_gbm and len(dets) < len(cfg.GBM_detectors):
     log(f'  WARNING: no Sun-pointed response for {sorted(set(cfg.GBM_detectors) - set(dets))}: not used')
-excluded = [d for d in dets if (d[0] == 'n' and not cfg.spec_use_nai) or (d[0] == 'b' and not cfg.spec_use_bgo)]
-if excluded:
-    log(f'  {", ".join(excluded)} excluded from the joint fit (NaI: {"on" if cfg.spec_use_nai else "off"}, '
-        f'BGO: {"on" if cfg.spec_use_bgo else "off"})')
-dets = [d for d in dets if d not in excluded]
-# reference detector for the normalisation freedom: the first BGO, or the first NaI without BGO
+# reference detector for the normalisation freedom: the first BGO, or the first NaI when no BGO is selected
 REF_DET = next((d for d in dets if d[0] == 'b'), dets[0] if dets else None)
 if use_lat and cfg.sun_centered and not os.path.isdir(common.lat_dir(cfg)):
     lat_data.make_sun_centered(common.lat_dir(cfg, False), common.lat_dir(cfg, True), info['lat_name'], log)
@@ -269,13 +264,10 @@ for (t0, t1) in cfg.spectral_intervals:
             log(f'  adding {comp} to {a}: TS = {ts:.1f}')
         log('BEST MODEL (BIC):', summary['best'])
         fig, ax = plt.subplots(figsize=(10, 7))
-        emax = cfg.SPEC_LAT_EMAX_MEV * 1e3 if use_lat else (cfg.LLE_EMAX_MEV * 1e3 if use_lle else
-                                                          (cfg.GBM_BGO_EMAX_KEV if any(d[0] == 'b' for d in dets) else cfg.GBM_NAI_EMAX_KEV))
+        emax = cfg.SPEC_LAT_EMAX_MEV * 1e3 if use_lat else (cfg.LLE_EMAX_MEV * 1e3 if use_lle else cfg.GBM_BGO_EMAX_KEV)
         for i, (name, sm) in enumerate(fitted.items()):
             best = name == summary['best']
-            emin = (cfg.GBM_NAI_EMIN_KEV if any(d[0] == 'n' for d in dets) else
-                    cfg.GBM_BGO_EMIN_KEV if dets else (cfg.LLE_EMIN_MEV if use_lle else cfg.SPEC_LAT_EMIN_MEV) * 1e3)
-            plot_model(sm, ax, emin, emax,
+            plot_model(sm, ax, min(cfg.GBM_NAI_EMIN_KEV if any(d[0] == 'n' for d in dets) else 300, 300), emax,
                        color=plt.cm.tab10(i % 10), components=best, alpha=1 if best else 0.45, lw=2.5 if best else 1.3,
                        label=f'{name}  (BIC {summary["fits"][name]["BIC"]:.1f})')
         ax.legend(fontsize=8, loc='lower left'); ax.grid(alpha=0.3)
