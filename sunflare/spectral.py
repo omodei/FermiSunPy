@@ -131,6 +131,8 @@ def nested_pairs(names):
     return res
 
 
+from sunflare import params as P  # noqa: E402
+PREV = {}            # best fit of each model in the previous interval (chain_intervals)
 for (t0, t1) in cfg.spectral_intervals:
     t0, t1 = float(t0), float(t1)
     tag = f'{t0:.1f}-{t1:.1f}'
@@ -178,7 +180,8 @@ for (t0, t1) in cfg.spectral_intervals:
         log('  WARNING:', pmsg)
     log('PLUGINS:', [p.name for p in plugins])
     summary = {'interval': [t0, t1], 'plugins': [p.name for p in plugins], 'problems': problems, 'fits': {},
-               'failed': {}, 'best': None, 'nested': []}
+               'failed': {}, 'best': None, 'nested': [], 'chain_intervals': bool(cfg.chain_intervals),
+               'link_line_index': bool(cfg.link_line_index)}
     if not plugins:
         common.save_json('summary.json', summary)
         continue
@@ -187,7 +190,12 @@ for (t0, t1) in cfg.spectral_intervals:
     for name in cfg.spectral_models:
         log(f'### MODEL {name}')
         try:
-            sm = SunModel(name, ra=RA, dec=DEC)
+            sm = SunModel(name, ra=RA, dec=DEC, link_line_index=cfg.link_line_index, overrides=cfg.param_overrides)
+            start = 'configured'
+            if cfg.chain_intervals and name in PREV:
+                if P.start_from(sm.model, PREV[name]['values']):
+                    start = 'previous interval ({:g}–{:g} s)'.format(*PREV[name]['interval'])
+                    log(f'  starting from the best fit of the {start}')
             jl = JointLikelihood(sm.model, data, verbose=False)
             for p in list(sm.model.parameters):
                 if 'GalacticTemplate' in p:
@@ -213,7 +221,8 @@ for (t0, t1) in cfg.spectral_intervals:
         r = {'logL': float(-like_df.loc['total', '-log(likelihood)']),
              'AIC': float(stat['AIC']), 'BIC': float(stat['BIC']),
              'n_free': len(sm.model.free_parameters), 'params': [], 'components': {}, 'lines': {},
-             'no_errors': no_errors}
+             'no_errors': no_errors, 'start': start, 'overrides': sm.applied,
+             'fixed': P.describe_fixed(sm.editable()), 'linked': ['brd.s = nar.s'] if sm.linked else []}
         try:
             df = res.get_data_frame()
         except Exception:
@@ -222,7 +231,7 @@ for (t0, t1) in cfg.spectral_intervals:
             df = pd.DataFrame({'value': [p.value for p in fp.values()], 'negative_error': np.nan,
                                'positive_error': np.nan, 'unit': [str(p.unit) for p in fp.values()]}, index=list(fp))
         for i in df.index:
-            r['params'].append([i.replace('Sun.spectrum.main.composite.', '').replace('Sun.spectrum.main.', ''),
+            r['params'].append([sm.short(i) if i.startswith(sm.source_name + '.') else i,
                                 float(df.loc[i, 'value']), float(df.loc[i, 'negative_error']),
                                 float(df.loc[i, 'positive_error']), str(df.loc[i, 'unit'])])
         funcs = sm.component_functions()
@@ -253,6 +262,11 @@ for (t0, t1) in cfg.spectral_intervals:
             log(f'  count plot failed: {e}')
         summary['fits'][name] = r
         fitted[name] = sm
+        try:
+            jl.restore_best_fit()
+        except Exception:
+            pass
+        PREV[name] = {'values': P.free_values(sm.model, sm.source_name), 'interval': (t0, t1)}
         log(f'  -logL = {-r["logL"]:.2f}  BIC = {r["BIC"]:.1f}  ' +
             '  '.join(f'{p[0]}={p[1]:.3g}' for p in r['params'][:8]))
         plt.close('all')

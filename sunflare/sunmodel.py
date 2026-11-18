@@ -106,10 +106,21 @@ def make_component(name):
     return f
 
 
+def make_component_params(name):
+    """Editable parameters of a component (cached default instances)."""
+    from sunflare.params import HIDDEN
+    if name not in _PARAMS_CACHE:
+        _PARAMS_CACHE[name] = [p for p in make_component(name).parameters.values() if p.name not in HIDDEN]
+    return _PARAMS_CACHE[name]
+
+
+_PARAMS_CACHE = {}
+
+
 class SunModel:
     """Composite Sun model built from a component string."""
 
-    def __init__(self, model_string, ra=0.0, dec=0.0, link_line_index=True, source_name='Sun'):
+    def __init__(self, model_string, ra=0.0, dec=0.0, link_line_index=True, source_name='Sun', overrides=None):
         from astromodels import PointSource, Model
         self.name = model_string
         self.components = model_string.split('+')
@@ -120,7 +131,19 @@ class SunModel:
             shape = shape + f
         self.composite = len(funcs) > 1
         self.model = Model(PointSource(source_name, ra=ra, dec=dec, spectral_shape=shape))
-        if link_line_index and 'nar' in self.components and 'brd' in self.components:
+        self.linked = bool(link_line_index and 'nar' in self.components and 'brd' in self.components)
+        # user settings (sunflare.params): component level, then model level
+        from sunflare import params as _params
+        self.applied = []
+        for c in self.components:
+            for pname in [p.name for p in make_component_params(c)]:
+                if self.linked and c == 'brd' and pname == 's':
+                    continue                      # follows nar.s
+                o, src = _params.resolve(overrides, c, pname, model_string)
+                if o:
+                    _params.apply(self.par(c, pname), o)
+                    self.applied.append({'param': f'{c}.{pname}', 'setting': o, 'scope': ' + '.join(src)})
+        if self.linked:
             self.model.link(self.par('brd', 's'), self.par('nar', 's'))
 
     def path(self, comp, par):
@@ -136,6 +159,19 @@ class SunModel:
     def component_functions(self):
         sh = self.model[self.source_name].spectrum.main.shape
         return list(sh.functions) if self.composite else [sh]
+
+    def editable(self):
+        """[(label, Parameter)] for the user-editable parameters ('brd.s' omitted when linked to nar.s)."""
+        return [(f'{c}.{p.name}', self.par(c, p.name)) for c in self.components for p in make_component_params(c)
+                if not (self.linked and c == 'brd' and p.name == 's')]
+
+    def short(self, path):
+        """'Sun.spectrum.main.composite.s_3' -> 'brd.s'."""
+        for c in self.components:
+            for p in make_component_params(c):
+                if self.path(c, p.name) == path:
+                    return f'{c}.{p.name}'
+        return path.replace(f'{self.source_name}.spectrum.main.composite.', '').replace(f'{self.source_name}.spectrum.main.', '')
 
     def describe(self):
         return ' + '.join(COMPONENTS[c]['label'] for c in self.components)

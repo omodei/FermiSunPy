@@ -75,6 +75,9 @@ DEFAULTS = {
     'spectral_intervals': [],
     'spectral_models': ['exp_co_le+nar+brd+g_2p2MeV', 'exp_co_le+nar+brd+g_2p2MeV+pion'],
     'spec_use_lat': True,
+    'param_overrides': {},        # user settings of model parameters (see sunflare/params.py)
+    'chain_intervals': False,     # start each interval / LAT bin from the previous best fit
+    'link_line_index': True,      # broad-line (brd) ion index follows the narrow-line (nar) one
     'SPEC_LAT_EMIN_MEV': 60.0,
     'SPEC_LAT_EMAX_MEV': 10000.0,
     # light curves in the report
@@ -228,6 +231,14 @@ def write_config(cfg):
         raise ValueError('The joint spectral fit needs at least one GBM background interval')
     if c['use_lle'] and c['spectral_intervals'] and not c['LLE_bkg_intervals']:
         raise ValueError('Select at least one LLE background interval, or switch LLE off')
+    c['param_overrides'] = {k: {f: v for f, v in o.items() if v is not None and v != ''}
+                            for k, o in (c.get('param_overrides') or {}).items() if o}
+    c['param_overrides'] = {k: o for k, o in c['param_overrides'].items() if o}
+    if c['param_overrides']:
+        from sunflare.params import validate
+        errs = validate(c['param_overrides'])
+        if errs:
+            raise ValueError('Parameter settings: ' + '; '.join(errs))
     for m in c['spectral_models']:
         bad = [x for x in m.split('+') if x not in COMPONENTS]
         if bad:

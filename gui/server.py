@@ -191,6 +191,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, meta())
             if method == 'GET' and p == '/api/search':
                 return self.send(200, search(q['date'], q.get('min_class', 'M')))
+            if method == 'GET' and p == '/api/params':
+                from sunflare.params import catalog
+                return self.send(200, catalog())
             if method == 'GET' and p == '/api/flare':
                 return self.send(200, flare_summary(q['name']))
             if method == 'GET' and p == '/api/flare_id':

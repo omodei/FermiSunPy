@@ -82,6 +82,11 @@ conda activate FermiSunPy        # needs fermitools, threeML, astromodels and su
 5. **Spectral models**: build models from components — `pow_le`, `exp_co_le`, `pow_he`, `exp_co_he`
    (bremsstrahlung continua), `nar`, `brd` (narrow/broad nuclear de-excitation line templates), `g_2p2MeV`,
    `g_511keV`, `g_1p7MeV` (lines), `pion` (pion-decay template) — e.g. `exp_co_le+nar+brd+g_2p2MeV+pion`.
+   *Parameters* (on each model) opens a table of its parameters: start value, min, max and fixed, for every model with
+   that component or for this model only (this model wins). The LAT card has the same table for the LAT models.
+   Template indices cannot leave their grids (pion s 2–6, nar/brd s 2.6–4.2). *Start each interval from the best fit of
+   the previous one* chains the joint-fit intervals (per model) and the LAT time-resolved bins (from the previous bin
+   with TS above the detection threshold); otherwise every interval starts from the configured values.
 6. **Run & report**: writes `config_<flare>.json`, runs the steps and builds `results/report.html`.
 
 **Reproducing a setup:** `config_<flare>.json` holds every setting, interval, model and the chosen run steps, plus

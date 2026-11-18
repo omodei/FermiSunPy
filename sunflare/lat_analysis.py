@@ -72,21 +72,31 @@ def get_plugin(a, b):
     return plugins[near_k][0]
 
 
-def analyse(a, b, tag, plot=False):
+PREV_LAT = {}   # best fit of the previous detected bin, per model (chain_intervals)
+
+
+def analyse(a, b, tag, plot=False, chain=False):
     row = {'t0': a, 't1': b, 'fits': {}}
     for kind in models:
+        start = PREV_LAT.get(kind) if (chain and cfg.chain_intervals) else None
         try:
-            jl, r = latfit.fit(get_plugin(a, b), kind, RA, DEC, E1, E2)
+            jl, r = latfit.fit(get_plugin(a, b), kind, RA, DEC, E1, E2, overrides=cfg.param_overrides,
+                               start=start['values'] if start else None)
+            if start and r['start'] != 'configured':
+                r['start'] = 'previous bin ({:g}–{:g} s)'.format(*start['interval'])
         except Exception as e:
             log(f'  {tag} {kind}: fit failed: {e}')
             row['fits'][kind] = {'error': str(e)}
             continue
         if r['TS'] < cfg.LAT_TS_MIN:
             try:
-                r.update({k: v for k, v in latfit.upper_limit(get_plugin(a, b), kind, RA, DEC, E1, E2).items()
+                r.update({k: v for k, v in latfit.upper_limit(get_plugin(a, b), kind, RA, DEC, E1, E2,
+                                                              overrides=cfg.param_overrides).items()
                           if k in ('flux_ul', 'eflux_ul', 'ul_shape')})
             except Exception as e:
                 log(f'  {tag} {kind}: upper limit failed: {e}')
+        elif chain:
+            PREV_LAT[kind] = {'values': r['best'], 'interval': (a, b)}   # only detected bins seed the next one
         par = ', '.join(f'{p}={v[0]:.3g}' for p, v in r['params'].items())
         log(f'  {tag} {a:9.1f}-{b:9.1f} s  {kind:6s} TS={r["TS"]:8.1f}  F={r["flux"][0]:.3e}  {par}')
         if plot:
@@ -115,11 +125,13 @@ def sed_points(jl):
 log('### STAGE: LAT time-integrated fit')
 integrated = analyse(integ[0], integ[1], 'integrated', plot=True)
 log('### STAGE: LAT time-resolved fits')
-resolved = [analyse(a, b, f'bin {i + 1}/{len(bins)}') for i, (a, b) in enumerate(bins)] if bins != [integ] else [integrated]
+resolved = [analyse(a, b, f'bin {i + 1}/{len(bins)}', chain=True) for i, (a, b) in enumerate(sorted(bins))] \
+    if bins != [integ] else [integrated]
 
 summary = {'integrated': integrated, 'resolved': resolved, 'method': method, 'models': models,
            'flux_band_MeV': [E1, E2], 'TS_MIN': cfg.LAT_TS_MIN, 'windows': windows, 'source_position': [RA, DEC],
-           'sun_centered': bool(cfg.sun_centered), 'irfs': cfg.irfs}
+           'sun_centered': bool(cfg.sun_centered), 'irfs': cfg.irfs, 'chain_intervals': bool(cfg.chain_intervals),
+           'param_overrides': {k: v for k, v in (cfg.param_overrides or {}).items() if k.startswith('lat:')}}
 common.save_json('lat_summary.json', summary)
 
 # source-probability events of the time-integrated interval (gtsrcprob), for the report's event table

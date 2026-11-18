@@ -156,7 +156,13 @@ if lat:
                 if 'TS' not in f:
                     out.append([f'{utc(r["t0"])}–{utc(r["t1"])}', E(k), '–', '–', E(f.get('error', 'failed')), '–'])
                     continue
-                par = '; '.join(f'{p} = {pm(*v)}' for p, v in f['params'].items())
+                fixed = {x[0] for x in f.get('fixed', [])}
+                par = '; '.join(f'{p} = {fmt(v[0])} <span class="err">(fixed)</span>' if p in fixed else f'{p} = {pm(*v)}'
+                                for p, v in f['params'].items())
+                if f.get('no_errors'):
+                    par += '<br><span class="err">no errors: parameters at their bounds</span>'
+                if f.get('start', 'configured') != 'configured':
+                    par += f'<br><span class="err">started from the {E(f["start"])}</span>'
                 if f['TS'] >= lat['TS_MIN']:
                     flux = pmb(*f['flux'])
                 else:
@@ -169,7 +175,18 @@ if lat:
     h += img(os.path.join(R, 'lat', 'lat_integrated_sed.png'), 'LAT time-integrated spectral models', 'fig half')
     for k in lat['models']:
         h += img(os.path.join(R, 'lat', f'lat_integrated_counts_{k}.png'), f'Count spectrum, {common.LAT_MODELS[k]}', 'fig half')
-    h += f'<h3>Time-resolved ({E(lat["method"])} bins)</h3>' + table(head, rows_for(lat['resolved']))
+    h += f'<h3>Time-resolved ({E(lat["method"])} bins)</h3>'
+    notes = []
+    if lat.get('chain_intervals'):
+        notes.append('each bin starts from the best fit of the previous bin in which the Sun is detected (TS ≥ '
+                     f'{lat["TS_MIN"]:g}); the first bin starts from the configured values')
+    if lat.get('param_overrides'):
+        notes.append('parameter settings: ' + '; '.join(
+            f'<code>{E(k[4:])}</code> ' + E(', '.join(f'{a} {b}' if a != 'fix' else ('fixed' if b else 'free')
+                                                         for a, b in o.items())) for k, o in lat['param_overrides'].items()))
+    if notes:
+        h += '<p class="muted">' + '. '.join(n[0].upper() + n[1:] for n in notes) + '.</p>'
+    h += table(head, rows_for(lat['resolved']))
     from sunflare.lat_events import load_or_extract
     EVENTS = load_or_extract(cfg, log=lambda *a: print(*a, flush=True)) or []
     if EVENTS:
@@ -195,7 +212,12 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
     d = os.path.dirname(s)
     a, b = S['interval']
     spec_h += f'<section class="spec"><h3>{a:g} – {b:g} s &nbsp;<span class="muted">({utc(a)} – {utc(b)} UTC)</span></h3>'
-    spec_h += f'<p class="muted">Data: {E(", ".join(S["plugins"]))}</p>'
+    spec_h += f'<p class="muted">Data: {E(", ".join(S["plugins"]))}'
+    if S.get('chain_intervals'):
+        spec_h += ' · each model starts from its best fit in the previous interval'
+    if S.get('link_line_index', True):
+        spec_h += ' · broad-line index tied to the narrow-line index (brd.s = nar.s)'
+    spec_h += '</p>'
     for p in S.get('problems', []):
         spec_h += f'<p class="warnline">{E(p)}</p>'
     if S['fits']:
@@ -213,7 +235,16 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
         spec_h += img(os.path.join(d, 'vfv.png'), 'νFν of the fitted models (best model with its components)', 'fig half')
         for n, v in S['fits'].items():
             spec_h += f'<details><summary><code>{E(n)}</code> — parameters, fluxes and count spectrum</summary>'
-            spec_h += table(['Parameter', 'Value', 'Unit'], [[f'<code>{E(p[0])}</code>', pm(p[1], p[2], p[3]), E(p[4])] for p in v['params']])
+            spec_h += (f'<p class="muted">Started from the {E(v.get("start", "configured"))} values.</p>'
+                       if v.get('start', 'configured') != 'configured' else '<p class="muted">Started from the configured values.</p>')
+            spec_h += table(['Free parameter', 'Value', 'Unit'], [[f'<code>{E(p[0])}</code>', pm(p[1], p[2], p[3]), E(p[4])] for p in v['params']])
+            if v.get('fixed'):
+                spec_h += table(['Fixed parameter', 'Value', 'Unit'], [[f'<code>{E(x[0])}</code>', fmt(x[1]), E(x[2])] for x in v['fixed']])
+            if v.get('overrides'):
+                spec_h += table(['Parameter setting', 'Start value', 'Min', 'Max', 'Fixed', 'Set for'], [
+                    [f'<code>{E(o["param"])}</code>', fmt(o['setting'].get('value')), fmt(o['setting'].get('min')),
+                     fmt(o['setting'].get('max')), {True: 'yes', False: 'no'}.get(o['setting'].get('fix'), '–'), E(o['scope'])]
+                    for o in v['overrides']])
             if v.get('lines'):
                 spec_h += table(['Line', 'Flux [ph cm⁻² s⁻¹]'], [[E(common.COMPONENTS[k]['label']), pm(*x)] for k, x in v['lines'].items()])
             bands = list(next(iter(v['components'].values())).keys()) if v['components'] else []
