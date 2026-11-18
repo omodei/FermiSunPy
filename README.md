@@ -56,79 +56,13 @@ the output file can be visualized with standard visualization tools, such as fv,
 
 ## Solar-flare analysis console (GUI) and pipeline
 
-A local web console that sets up and runs a complete Fermi analysis of a solar flare (GOES + GBM + LLE + LAT)
-and produces an HTML report. It generalizes the scripts of the `solarflares` repository
-(`SunModel.py`, `SolarTemplates.py`, `timeresolved_analysis.py`, `spectral_analysis.py`, ...).
+The solar-flare analysis console (GOES + GBM + LLE + LAT pipeline, GUI and interactive report) now lives in the
+[fermiconsole](https://github.com/omodei/fermiconsole) repository, as its `sun` flavor. It uses `suncenter.py` and
+`sunpos.py` from this repository and keeps reading and writing the flare folders in `flares/` here.
 
 ```bash
-conda activate FermiSunPy        # needs fermitools, threeML, astromodels and sunpy (pip install "sunpy[all]")
-./gui/start_gui.sh               # serves http://localhost:8766
+./gui/start_gui.sh               # starts the fermiconsole solar-flare console (FermiSunPy env), http://localhost:8766
 ```
 
-1. **Flare & data**: pick a day, *Find flares* lists the GOES flares (HEK, via sunpy) and the GBM triggers;
-   *Use* fills T0 (GOES start), end, peak and class. *Download data* fetches into `flares/SOLYYYYMMDD_HHMM/`:
-   GOES XRS (sunpy `Fido`), GBM daily CSPEC for the 14 detectors with the **Sun-pointed RSP2** responses from
-   hesperia (merged over the window), LLE files of GBM triggers in the window (if any), LAT FT1/FT2 within 15°
-   of the Sun, the LAT Sun visibility windows, and optionally **Sun-centred** FT1/FT2 (`suncenter.py`).
-2. **GBM detectors**: sorted by the Sun angle; the two NaI and the BGO facing the Sun are pre-selected.
-3. **Light curves & intervals**: GOES, GBM NaI/BGO bands, LLE, LAT photons and the Sun off-axis/zenith angles
-   on a common UTC axis. Drag to define GBM/LLE backgrounds, joint spectral-fit intervals, the LAT localization
-   interval, the LAT time-integrated interval and custom LAT bins. *Bayesian blocks* (with p0) fills the custom LAT
-   bins from the Sun photons of the time-integrated interval (same selection as the LAT step, split at the
-   visibility windows) and draws each bin's photon rate on the LAT panel; the bins can then be edited.
-4. **LAT analysis**: event class, ROI, zenith/θ cuts, energy range and flux band, Sun-centred frame, localization
-   (gtfindsrc + TS map), time-resolved binning (visibility windows, Bayesian blocks, N photons, custom) and LAT
-   models (pion-decay template, power law, cutoff power law).
-5. **Spectral models**: build models from components — `pow_le`, `exp_co_le`, `pow_he`, `exp_co_he`
-   (bremsstrahlung continua), `nar`, `brd` (narrow/broad nuclear de-excitation line templates), `g_2p2MeV`,
-   `g_511keV`, `g_1p7MeV` (lines), `pion` (pion-decay template) — e.g. `exp_co_le+nar+brd+g_2p2MeV+pion`.
-   *Parameters* (on each model) opens a table of its parameters: start value, min, max and fixed, for every model with
-   that component or for this model only (this model wins). The LAT card has the same table for the LAT models.
-   Template indices cannot leave their grids (pion s 2–6, nar/brd s 2.6–4.2). *Start each interval from the best fit of
-   the previous one* chains the joint-fit intervals (per model) and the LAT time-resolved bins (from the previous bin
-   with TS above the detection threshold); otherwise every interval starts from the configured values.
-6. **Run & report**: writes `config_<flare>.json`, runs the steps and builds `results/report.html`.
-
-**Reproducing a setup:** `config_<flare>.json` holds every setting, interval, model and the chosen run steps, plus
-the flare definition used for the download (T0, end, peak, class, window, Sun-centred files, local FT1/FT2/LLE
-paths) and the software versions. *Download configuration* saves it; *Load configuration…* restores it: for a flare
-already on disk it applies the settings (review, then Save or Run); otherwise it fills the New-flare form and applies
-the configuration once *Download data* finishes. `python -m sunflare.run_analysis <config>` runs the saved steps.
-
-Pipeline steps (also usable without the GUI):
-
-| step | module | output (`flares/<id>/results/`) |
-|---|---|---|
-| download | `python -m sunflare.fetch_data --t0 "2025-11-11 09:49:00" --tend ... --peak ... [--sun-centered] [--lat-ft1 F --lat-ft2 F] [--lle-dir D]` | `flare_info.json`, data |
-| light curves | `python -m sunflare.lightcurves <config>` | `lightcurves/overview.png, zoom.png` |
-| localization | `python -m sunflare.localization <config>` | `localization/tsmap.png, localization.json` (offset from the Sun centre, helioprojective) |
-| LAT likelihood | `python -m sunflare.lat_analysis <config>` | `lat/lat_summary.json, lat_lightcurve.png` (flux, proton index, TS, ULs, source-probability events) |
-| joint fits | `python -m sunflare.spectral <config>` | `spectrum_<t0>-<t1>/summary.json, vfv.png, counts_<model>.png` (BIC ranking, TS of added components) |
-| report | `python -m sunflare.make_report <config>` | `report.html` |
-| all | `python -m sunflare.run_analysis <config> --steps lightcurves,localization,lat,spectral,report` | |
-
-**Interactive report figures.** The *Light curves* and *LAT likelihood* tabs of `report.html` embed the data at full
-resolution (GOES 1 s, GBM CSPEC native bins, LLE 1 s, every LAT photon, the time-resolved LAT fits) and draw them in
-the browser on one shared time axis: drag across a panel to zoom, Shift-drag to pan, ⌘/Ctrl + wheel or pinch to zoom
-around the cursor, double-click for the full window; preset buttons jump to the flare, the spectral intervals, the
-LAT bins or a visibility window. Curves are rebinned to the screen resolution and the y-axes rescale to the view.
-Panels can be resized (drag the lower edge), hidden, switched log/linear, and shown full screen; *Save PNG* exports
-the current view, *Copy link* gives a URL that reopens it (`report.html#lc&t=1300,1800`). Hovering shows the values of
-every panel, the LAT bin fit and the spectral-interval result; clicking a LAT point or a gold interval tab opens its
-results. *Filter events table* restricts the source-probability table to the zoomed time range. The static PNGs
-are kept under *Static figures* and used when printing.
-
-**Interactive spectra.** Every LAT fit (time-integrated and each time-resolved bin) and every joint-fit model has a
-*Counts* button that opens its count spectrum: data, total model, components (Sun / isotropic / Galactic for the LAT,
-background for GBM and LLE) and residuals (data − model)/σ, with channels grouped to a minimum number of counts. You
-can switch or compare models, toggle detectors and components, step through bins or intervals with ← →, drag to zoom
-in energy, drag the gap between the panels to resize them, go full screen and save a PNG. Joint fits also show the
-νFν of each model and its components. The data come from the LAT step (`lat_summary.json`) and the spectral step
-(`spectrum_<t0>-<t1>/counts.json`); results made before this version need those steps re-run.
-
-`--lat-ft1/--lat-ft2` and `--lle-dir` import files already on disk (e.g. weekly files, or when the LAT data server
-is down). The pion/NAR/BRD astromodels templates are built on first use from `solarflares/Sun/data`
-(override with `SUNFLARE_TEMPLATES`); flare data go to `flares/` (override with `SUNFLARE_DATA`).
-
----
-For question and comments: [nicola.omodei@stanford.edu](mailto:nicola.omodei@stanford.edu)
+The wrapper looks for fermiconsole in `~/gitrepository/fermiconsole` (set `FERMICONSOLE_PATH` otherwise). The console
+code that was in `sunflare/` and `gui/` is in this repository's history (branch `solar-console`, cc5976d).
