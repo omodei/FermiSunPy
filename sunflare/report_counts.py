@@ -11,6 +11,7 @@ import json
 import os
 
 from sunflare import common
+from sunflare import params as P
 
 E = html.escape
 
@@ -25,7 +26,7 @@ def _g(v, p=3):
     return f'{v:.{p - 1}e}' if v != 0 and (abs(v) < 1e-2 or abs(v) >= 1e5) else f'{v:.{p}g}'
 
 
-def _lat_info(f, ts_min, band):
+def _lat_info(f, ts_min, band, kind=None, overrides=None):
     det = f['TS'] >= ts_min
     s = f'TS {f["TS"]:.1f} · log L {f["logL"]:.2f}'
     if det and f.get('flux'):
@@ -35,7 +36,9 @@ def _lat_info(f, ts_min, band):
     fixed = {x[0] for x in f.get('fixed', [])}
     par = '; '.join(f'{p} = {v[0]:.3g} (fixed)' if p in fixed else f'{p} = {v[0]:.3g} −{abs(v[1]):.2g} +{abs(v[2]):.2g}'
                     for p, v in f.get('params', {}).items()) if det else ''
-    notes = (['no errors: parameters at their bounds'] if f.get('no_errors') else []) + \
+    hits = P.fit_limits(f, lat_kind=kind, overrides=overrides, ts_min=ts_min)
+    notes = ([f'⚠ {P.describe_limits(hits)}'] if hits else []) + \
+            (['no errors: parameters at their bounds'] if f.get('no_errors') else []) + \
             ([f'started from the {f["start"]}'] if f.get('start', 'configured') != 'configured' else [])
     return s, E(par), E(' · '.join(notes))
 
@@ -48,7 +51,7 @@ def _lat_set(r, key, title, lat):
             continue
         if data is None:
             data = {'LAT': {'kind': 'lat', 'E': [e * 1e3 for e in c['E']], 'n': c['n'], 't': r['t1'] - r['t0']}}
-        s, par, notes = _lat_info(f, lat['TS_MIN'], lat['flux_band_MeV'])
+        s, par, notes = _lat_info(f, lat['TS_MIN'], lat['flux_band_MeV'], kind, lat.get('param_overrides'))
         models[kind] = {'label': common.LAT_MODELS[kind], 'short': {'pion': 'pion', 'pow': 'power law', 'expco': 'cutoff PL'}.get(kind, kind),
                         'info': s, 'par': par, 'notes': notes, 'logL': f['logL'], 'ds': {'LAT': c['m']}}
     if not models:
@@ -57,7 +60,7 @@ def _lat_set(r, key, title, lat):
             'best': r.get('best'), 'models': models, 'data': data}
 
 
-def _joint_set(S, C, key):
+def _joint_set(S, C, key, overrides=None):
     fits = S.get('fits', {})
     if not fits or not C or not C.get('models'):
         return None
@@ -70,7 +73,9 @@ def _joint_set(S, C, key):
         info = (f'−log L {-v["logL"]:.2f} · BIC {v["BIC"]:.1f} (ΔBIC {v["BIC"] - best_bic:.1f}) · '
                 f'{v["n_free"]} free parameters')
         par = '; '.join(f'{p[0]} = {_g(p[1])}' for p in v.get('params', []) if not p[0].startswith(('cons_', 'Isotropic', 'Galactic')))
-        notes = (['no errors: parameters at their bounds'] if v.get('no_errors') else []) + \
+        hits = P.fit_limits(v, model=name, overrides=overrides)
+        notes = ([f'⚠ {P.describe_limits(hits)}'] if hits else []) + \
+                (['no errors: parameters at their bounds'] if v.get('no_errors') else []) + \
                 ([f'started from the {v["start"]}'] if v.get('start', 'configured') != 'configured' else []) + \
                 [f'fixed: {", ".join(x[0] for x in v["fixed"])}'] * bool(v.get('fixed'))
         models[name] = {'label': name, 'short': name, 'info': info, 'par': E(par), 'notes': E(' · '.join(notes)),
@@ -82,7 +87,7 @@ def _joint_set(S, C, key):
             'models': models, 'data': C['data'], 'vfvE': C.get('vfv_E')}
 
 
-def build(lat, R, spec_id):
+def build(lat, R, spec_id, overrides=None):
     sets = []
     if lat:
         s = _lat_set(lat['integrated'], 'integ', 'time-integrated', lat)
@@ -97,7 +102,7 @@ def build(lat, R, spec_id):
         S = common.load_json(p) or {}
         C = common.load_json(os.path.join(os.path.dirname(p), 'counts.json'))
         if 'interval' in S:
-            s = _joint_set(S, C, spec_id(*S['interval']))
+            s = _joint_set(S, C, spec_id(*S['interval']), overrides)
             if s:
                 sets.append(s)
     return {'sets': sets} if sets else None
@@ -136,7 +141,7 @@ dialog.cdlg::backdrop { background:rgba(10,14,22,.55) }
 .cdlg .cm .sep { width:1px; height:18px; background:var(--line) }
 .cdlg canvas { display:block; width:100%; touch-action:none } .cdlg .cvbox { padding:4px 8px 0 }
 .cdlg .ci { padding:4px 16px 14px; font:13px/1.55 ui-monospace,Menlo,monospace; color:var(--fg) }
-.cdlg .ci .muted { color:var(--muted) } .cdlg .cr { padding:0 16px; min-height:20px; font:12px ui-monospace,Menlo,monospace; color:var(--muted) }
+.cdlg .ci .muted { color:var(--muted) } .cdlg .ci .warn { color:var(--warn) } .cdlg .cr { padding:0 16px; min-height:20px; font:12px ui-monospace,Menlo,monospace; color:var(--muted) }
 '''
 
 JS = r'''
@@ -196,7 +201,7 @@ function render() {
   else comps = Object.keys((s.models[S.kind].vfv || {}).comps || {});
   $d('.comps').innerHTML = comps.map((c, j) => `<label><input type="checkbox" data-c="${c}"${S.hide[c] ? '' : ' checked'}><i style="border-top-style:${c === 'Sun' ? 'solid' : 'dashed'};border-color:${COMPCOL[c] || (S.view === 'vfv' ? mcolOf(s, S.kind) : mcolOf(s, S.kind))}"></i>${c}</label>`).join('');
   const shown = mods.filter(k => S.cmp || k === S.kind);
-  const lines = shown.map(k => { const m = s.models[k]; return `<span style="color:${mcolOf(s, k)}">■</span> <b>${m.label}</b>${k === s.best ? ' ★ best' : ''} · ${m.info}` + (m.par ? `<br><span class="muted">   ${m.par}</span>` : '') + (m.notes ? `<br><span class="muted">   ${m.notes}</span>` : ''); });
+  const lines = shown.map(k => { const m = s.models[k]; return `<span style="color:${mcolOf(s, k)}">■</span> <b>${m.label}</b>${k === s.best ? ' ★ best' : ''} · ${m.info}` + (m.par ? `<br><span class="muted">   ${m.par}</span>` : '') + (m.notes ? `<br><span class="${m.notes.startsWith('⚠') ? 'warn' : 'muted'}">   ${m.notes}</span>` : ''); });
   if (S.cmp && mods.length > 1) { const L = mods.map(k => s.models[k].logL); lines.push(`<span class="muted">largest Δ log L between models: ${(Math.max(...L) - Math.min(...L)).toFixed(2)}</span>`); }
   $d('.ci').innerHTML = lines.join('<br>');
   draw();

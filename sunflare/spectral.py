@@ -224,7 +224,8 @@ for (t0, t1) in cfg.spectral_intervals:
              'AIC': float(stat['AIC']), 'BIC': float(stat['BIC']),
              'n_free': len(sm.model.free_parameters), 'params': [], 'components': {}, 'lines': {},
              'no_errors': no_errors, 'start': start, 'overrides': sm.applied,
-             'fixed': P.describe_fixed(sm.editable()), 'linked': ['brd.s = nar.s'] if sm.linked else []}
+             'fixed': P.describe_fixed(sm.editable()), 'linked': ['brd.s = nar.s'] if sm.linked else [],
+             'at_limits': P.limits_of_model(sm)}
         try:
             df = res.get_data_frame()
         except Exception:

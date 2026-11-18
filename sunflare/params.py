@@ -154,3 +154,93 @@ def start_from(model, values):
 def describe_fixed(pairs):
     """[[label, value, unit], ...] for the fixed parameters among (label, Parameter) pairs."""
     return [[lab, float(p.value), str(p.unit)] for lab, p in pairs if p.fix]
+
+
+def _near(v, b, lo, hi):
+    """True if v sits on bound b (relative tolerance for parameters spanning many decades)."""
+    if b is None or v is None:
+        return False
+    if lo is not None and hi is not None and lo > 0 and hi / lo > 1e3:
+        return abs(v - b) <= 2e-3 * abs(b)
+    span = (hi - lo) if (lo is not None and hi is not None) else max(abs(b), 1.0)
+    return abs(v - b) <= 1e-3 * span
+
+
+def limit_hit(label, v, lo, hi, hard=None):
+    """{'param', 'value', 'side', 'bound', 'grid'} if v is at one of its bounds, else None."""
+    for side, b in (('lower', lo), ('upper', hi)):
+        if _near(v, b, lo, hi):
+            grid = bool(hard) and abs(b - hard[0 if side == 'lower' else 1]) < 1e-6
+            return {'param': label, 'value': float(v), 'side': side, 'bound': float(b), 'grid': grid}
+    return None
+
+
+def limits_of_model(sm):
+    """Free parameters of a fitted SunModel at their bounds (spectral.py)."""
+    out = []
+    for path, p in sm.model.free_parameters.items():
+        lab = sm.short(path) if path.startswith(sm.source_name + '.') else path.split('.')[-1]
+        comp, _, par = lab.partition('.')
+        h = limit_hit(lab, float(p.value), *p.bounds, hard=HARD.get((comp, par)))
+        if h:
+            out.append(h)
+    return out
+
+
+def limits_of_lat(model, kind, source):
+    """Free parameters of a fitted LAT model at their bounds (latfit.py)."""
+    out = []
+    for path, p in model.free_parameters.items():
+        lab = p.name if path.startswith(source + '.') else path.split('.')[0]
+        h = limit_hit(lab, float(p.value), *p.bounds, hard=HARD.get(('lat:' + kind, p.name)))
+        if h:
+            out.append(h)
+    return out
+
+
+def limits_from_values(values, model=None, overrides=None, lat_kind=None):
+    """Fallback for results saved without 'at_limits': compare fitted values with the default bounds of the
+    catalog, the user's settings and the template grids. values: {label: value} ('comp.par' or LAT 'par')."""
+    cat = catalog()
+    out = []
+    for lab, v in values.items():
+        if lat_kind:
+            comp, par, pre = lat_kind, lab, 'lat:'
+            d = {p['name']: p for p in cat['lat'].get(lat_kind, [])}.get(par)
+        else:
+            comp, _, par = lab.partition('.')
+            pre = ''
+            d = {p['name']: p for p in cat['components'].get(comp, [])}.get(par)
+        if d is None:
+            continue
+        o, _ = resolve(overrides, comp, par, model=model, prefix=pre)
+        lo = o.get('min') if o.get('min') is not None else d['min']
+        hi = o.get('max') if o.get('max') is not None else d['max']
+        h = limit_hit(f'{comp}.{par}' if lat_kind else lab, v, lo, hi, hard=HARD.get((pre + comp, par)))
+        if h:
+            out.append(h)
+    return out
+
+
+def describe_limits(hits):
+    """Short text: 'pion.s = 6 at the upper end of the template grid; nar.s = 4.2 at its upper limit'."""
+    return '; '.join(f'{h["param"]} = {h["value"]:.4g} at ' +
+                     (f'the {h["side"]} end of the template grid' if h.get('grid') else f'its {h["side"]} limit')
+                     for h in hits)
+
+
+def fit_limits(f, model=None, lat_kind=None, overrides=None, ts_min=None):
+    """Parameters at limits of one saved fit result (joint: params list; LAT: params dict). Uses the
+    'at_limits' recorded at fit time, else limits_from_values. LAT bins below ts_min are not checked."""
+    if not f or 'logL' not in f or (ts_min is not None and f.get('TS', 0) < ts_min):
+        return []
+    if 'at_limits' in f:
+        return f['at_limits']
+    if lat_kind:
+        vals = {p: v[0] for p, v in (f.get('params') or {}).items()}
+    else:
+        vals = {p[0]: p[1] for p in f.get('params') or []}
+    try:
+        return limits_from_values(vals, model=model, overrides=overrides, lat_kind=lat_kind)
+    except Exception:
+        return []

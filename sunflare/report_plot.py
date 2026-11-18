@@ -13,6 +13,7 @@ import numpy as np
 from astropy.io import fits
 
 from sunflare import common, lcdata
+from sunflare import params as P
 
 
 def _r(x, nd):
@@ -133,7 +134,9 @@ def _like(lat):
             bins.append({'a': r['t0'], 'b': r['t1'], 'key': f'{r["t0"]:.3f}', 'TS': round(f['TS'], 2),
                          'flux': None if f['TS'] < lat['TS_MIN'] else [float(x) for x in f['flux']],
                          'ul': f.get('flux_ul'), 'par': None if (par is None or fixed or f['TS'] < lat['TS_MIN']) else par,
-                         'best': r.get('best') == kind, 'noerr': bool(f.get('no_errors'))})
+                         'best': r.get('best') == kind, 'noerr': bool(f.get('no_errors')),
+                         'lim': P.describe_limits(P.fit_limits(f, lat_kind=kind, overrides=lat.get('param_overrides'),
+                                                               ts_min=lat['TS_MIN']))})
         out['models'][kind] = bins
         out['labels'][kind] = [SHAPE_PARS[kind][0][0], SHAPE_PARS[kind][0][1], common.LAT_MODELS[kind]]
     out['main'] = 'pion' if 'pion' in out['models'] else lat['models'][0]
@@ -571,7 +574,8 @@ function drawPanel(F_, p) {
         c.beginPath(); c.moveTo(xa, y); c.lineTo(xb, y); c.stroke();
         if (ul) { c.beginPath(); c.moveTo(xm, y); c.lineTo(xm, y + 16); c.stroke(); c.beginPath(); c.moveTo(xm - 4, y + 11); c.lineTo(xm, y + 17); c.lineTo(xm + 4, y + 11); c.fill(); }
         else { if (lo !== hi) { c.beginPath(); c.moveTo(xm, ys(Math.max(lo, p.log ? 1e-30 : -1e30))); c.lineTo(xm, ys(hi)); c.stroke(); }
-          c.beginPath(); id === 'ts' ? c.rect(xm - 3, y - 3, 6, 6) : c.arc(xm, y, 3.2, 0, 7); c.fill(); if (b.noerr && id !== 'ts') { c.fillStyle = css('--surface'); c.beginPath(); c.arc(xm, y, 1.6, 0, 7); c.fill(); } }
+          c.beginPath(); id === 'ts' ? c.rect(xm - 3, y - 3, 6, 6) : c.arc(xm, y, 3.2, 0, 7); c.fill(); if (b.noerr && id !== 'ts') { c.fillStyle = css('--surface'); c.beginPath(); c.arc(xm, y, 1.6, 0, 7); c.fill(); }
+          if (b.lim && id === 'par') { c.strokeStyle = '#d97706'; c.lineWidth = 2; c.beginPath(); c.moveTo(xm, y - 11); c.lineTo(xm + 7, y + 1); c.lineTo(xm - 7, y + 1); c.closePath(); c.stroke(); c.lineWidth = 1.4; } }
       }
       c.restore(); c.lineWidth = 1;
     } else { c.fillStyle = css('--muted'); c.textAlign = 'center'; c.fillText(id === 'par' ? 'no detected bin in view (or parameter fixed)' : 'no LAT bin in view', (g.x0 + g.x1) / 2, (g.y0 + g.y1) / 2); }
@@ -602,7 +606,7 @@ function readout(F_, t, px) {
   if (D.like && F_.panels.some(p => p.vis && PANELS[p.id].like)) {
     const b = D.like.models[likeModel].find(b => t >= b.a && t < b.b), lab = D.like.labels[likeModel];
     if (b) out.push(`<b>LAT bin ${b.a.toFixed(0)}–${b.b.toFixed(0)} s</b>  ${lab[2]}\n  TS ${b.TS.toFixed(1)}  ` + (b.flux ? `flux ${g3(b.flux[0])} (${g3(b.flux[1])}–${g3(b.flux[2])})` : `flux < ${g3(b.ul)} (95% UL)`) +
-      (b.par ? `\n  ${lab[0]} = ${g3(b.par[0])} −${g3(Math.abs(b.par[1]))} +${g3(b.par[2])}` : '') + (b.best ? '  ★ best model' : '') + (b.noerr ? '\n  no errors: parameters at their bounds' : ''));
+      (b.par ? `\n  ${lab[0]} = ${g3(b.par[0])} −${g3(Math.abs(b.par[1]))} +${g3(b.par[2])}` : '') + (b.best ? '  ★ best model' : '') + (b.noerr ? '\n  no errors: parameters at their bounds' : '') + (b.lim ? `\n  ⚠ ${b.lim}` : ''));
   }
   D.spectral.forEach((s, i) => { if (t >= s.a && t <= s.b) out.push(`<b>Spectral interval S${i + 1}</b>  ${s.a}–${s.b} s\n  ` + (s.best ? `best model ${s.best}` + (s.pion != null ? `\n  adding pion decay: TS = ${s.pion.toFixed(1)}` : '') : 'not fitted yet')); });
   D.windows.forEach((w, i) => { if (t >= w[0] && t <= w[1]) out.push(`LAT visibility window #${i + 1}`); });

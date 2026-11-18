@@ -14,6 +14,22 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from sunflare import common, report_counts, report_plot  # noqa: E402
+from sunflare import params as P  # noqa: E402
+
+LIMNOTE = ('⚠ marks fits with a parameter at a limit of its allowed range: the best fit would move beyond it, so that '
+           'parameter has no reliable error and the fit statistic (TS, log L, BIC) is that of the constrained model. '
+           'For the templates the range is the computed grid (pion s 2–6, narrow/broad-line s 2.6–4.2) and cannot be '
+           'widened without new templates; for the other parameters widen the limits in the console\'s Parameters table.')
+
+
+def lim_mark(hits):
+    if not hits:
+        return ''
+    return f' <span class="lim" title="{E(P.describe_limits(hits))}">⚠</span>'
+
+
+def lim_text(hits):
+    return f'<br><span class="limtxt">⚠ {E(P.describe_limits(hits))}</span>' if hits else ''
 
 cfg = common.load_config(sys.argv[1])
 info, fdir = cfg.info, cfg.pwd
@@ -71,7 +87,7 @@ EVENTS = []
 lc = common.load_json(os.path.join(R, 'lightcurves', 'lightcurves.json'), {})
 loc = common.load_json(os.path.join(R, 'localization', 'localization.json'))
 lat = common.load_json(os.path.join(R, 'lat', 'lat_summary.json'))
-CSPEC = report_counts.build(lat, R, report_plot.spec_id)
+CSPEC = report_counts.build(lat, R, report_plot.spec_id, overrides=cfg.param_overrides)
 CKEYS = report_counts.keys(CSPEC)
 facts = [('Flare', cfg.name), ('GOES class', info.get('goes_class', '–')),
          ('T0 (UTC)', info.get('t0_utc')), ('MET of T0', f'{info["T0"]:.3f}'),
@@ -88,10 +104,12 @@ if lat and lat.get('integrated', {}).get('fits'):
     m = 'pion' if 'pion' in integ['fits'] else list(integ['fits'])[0]
     f = integ['fits'][m]
     if 'flux' in f:
+        lh = P.fit_limits(f, lat_kind=m, overrides=lat.get('param_overrides'), ts_min=lat['TS_MIN'])
         key.append(f'LAT time-integrated ({integ["t0"]:g}–{integ["t1"]:g} s, {common.LAT_MODELS[m].lower()}): '
                    f'TS = {f["TS"]:.0f}, flux {lat["flux_band_MeV"][0]:g}–{lat["flux_band_MeV"][1]:g} MeV = '
                    f'{pmb(*f["flux"])} ph cm<sup>−2</sup> s<sup>−1</sup>' +
-                   (f', proton index s = {pm(*f["params"]["s"])}' if 's' in f.get('params', {}) else ''))
+                   (f', proton index s = {pm(*f["params"]["s"])}' if 's' in f.get('params', {}) else '') +
+                   (f' <span class="limtxt">⚠ {E(P.describe_limits(lh))}</span>' if lh else ''))
 if loc:
     key.append(f'LAT position {loc["offset_deg"]:.2f}° from the Sun centre (r68 = {loc["r68_deg"]:.2f}°, '
                f'helioprojective {loc["hpc_arcsec"][0]:.0f}″, {loc["hpc_arcsec"][1]:.0f}″): '
@@ -104,7 +122,9 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json'))):
     if S and S.get('best'):
         piontest = [n for n in S['nested'] if n['component'] == 'pion']
         extra = f'; adding pion decay: TS = {max(n["TS"] for n in piontest):.1f}' if piontest else ''
-        key.append(f'Joint fit {S["interval"][0]:g}–{S["interval"][1]:g} s: best model (BIC) <code>{E(S["best"])}</code>{extra}')
+        jh = P.fit_limits(S['fits'][S['best']], model=S['best'], overrides=cfg.param_overrides)
+        key.append(f'Joint fit {S["interval"][0]:g}–{S["interval"][1]:g} s: best model (BIC) <code>{E(S["best"])}</code>{extra}'
+                   + (f' <span class="limtxt">⚠ {E(P.describe_limits(jh))}</span>' if jh else ''))
 summary_html = '<div class="facts">' + ''.join(f'<div><span>{E(k)}</span><b>{E(str(v))}</b></div>' for k, v in facts) + '</div>'
 if key:
     summary_html += '<h3>Key results</h3><ul class="key">' + ''.join(f'<li>{k}</li>' for k in key) + '</ul>'
@@ -170,6 +190,9 @@ if lat:
                 fixed = {x[0] for x in f.get('fixed', [])}
                 par = '; '.join(f'{p} = {fmt(v[0])} <span class="err">(fixed)</span>' if p in fixed else f'{p} = {pm(*v)}'
                                 for p, v in f['params'].items())
+                lh = P.fit_limits(f, lat_kind=k, overrides=lat.get('param_overrides'), ts_min=lat['TS_MIN'])
+                LIMS_SEEN.extend(lh)
+                par += lim_text(lh)
                 if f.get('no_errors'):
                     par += '<br><span class="err">no errors: parameters at their bounds</span>'
                 if f.get('start', 'configured') != 'configured':
@@ -179,12 +202,13 @@ if lat:
                 else:
                     flux = f'&lt; {fmt(f.get("flux_ul"))} <span class="err">(95% UL)</span>'
                 out.append([f'{utc(r["t0"])}–{utc(r["t1"])}<br><span class="err">{r["t0"]:.0f}–{r["t1"]:.0f} s</span>',
-                            E(k) + (' ★' if r.get('best') == k else ''), f'{f["TS"]:.1f}', flux, par, f'{f["logL"]:.2f}',
+                            E(k) + (' ★' if r.get('best') == k else '') + lim_mark(lh), f'{f["TS"]:.1f}', flux, par, f'{f["logL"]:.2f}',
                             report_counts.button(keyf(r), k) if k in CKEYS.get(keyf(r), ()) else
                             '<span class="err" title="Count spectra are saved by the LAT step since this version">re-run the LAT step</span>'])
                 if attrs is not None:
                     attrs.append(f' data-bin="{r["t0"]:.3f}"')
         return out
+    LIMS_SEEN = []
     head = ['Interval (UTC)', 'Model', 'TS', f'Flux {band} [ph cm⁻² s⁻¹]', 'Parameters', 'log L', 'Spectrum']
     h += '<h3>Time-integrated</h3>' + table(head, rows_for([lat['integrated']], keyf=lambda r: 'integ'))
     h += img(os.path.join(R, 'lat', 'lat_integrated_sed.png'), 'LAT time-integrated spectral models', 'fig half')
@@ -203,6 +227,8 @@ if lat:
         h += '<p class="muted">' + '. '.join(n[0].upper() + n[1:] for n in notes) + '.</p>'
     bin_attrs = []
     h += table(head, rows_for(lat['resolved'], bin_attrs), attrs=bin_attrs)
+    if LIMS_SEEN:
+        h += f'<p class="limtxt">{E(LIMNOTE)}</p>'
     from sunflare.lat_events import load_or_extract
     EVENTS = load_or_extract(cfg, log=lambda *a: print(*a, flush=True)) or []
     if EVENTS:
@@ -239,14 +265,19 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
     if S['fits']:
         best_bic = min(v['BIC'] for v in S['fits'].values())
         rows = []
+        LIMS = {n: P.fit_limits(v, model=n, overrides=cfg.param_overrides) for n, v in S['fits'].items()}
         for n, v in sorted(S['fits'].items(), key=lambda kv: kv[1]['BIC']):
             sk = report_plot.spec_id(a, b)
-            rows.append([f'<code>{E(n)}</code>' + (' ★' if n == S['best'] else '') +
+            rows.append([f'<code>{E(n)}</code>' + (' ★' if n == S['best'] else '') + lim_mark(LIMS[n]) +
                          (' <span class="err">(no errors: parameters at bounds)</span>' if v.get('no_errors') else ''), f'{-v["logL"]:.2f}', v['n_free'],
                          f'{v["AIC"]:.1f}', f'{v["BIC"]:.1f}', f'{v["BIC"] - best_bic:.1f}',
                          report_counts.button(sk, n, 'Counts &amp; νFν') if n in CKEYS.get(sk, ()) else
                          '<span class="err" title="Interactive spectra are saved by the spectral step since this version">re-run the spectral step</span>'])
         spec_h += table(['Model', '−log L', 'free par.', 'AIC', 'BIC', 'ΔBIC', 'Spectrum'], rows)
+        if any(LIMS.values()):
+            spec_h += ('<div class="limbox"><b>⚠ Parameters at a limit</b><ul>' + ''.join(
+                f'<li><code>{E(n)}</code>: {E(P.describe_limits(hh))}</li>' for n, hh in LIMS.items() if hh) +
+                f'</ul><span class="muted">{E(LIMNOTE)}</span></div>')
         if S['nested']:
             spec_h += '<h4>Component significance (likelihood ratio)</h4>' + table(
                 ['Added component', 'to model', 'TS = 2ΔlogL'],
@@ -256,7 +287,9 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
             spec_h += f'<details><summary><code>{E(n)}</code> — parameters, fluxes and count spectrum</summary>'
             spec_h += (f'<p class="muted">Started from the {E(v.get("start", "configured"))} values.</p>'
                        if v.get('start', 'configured') != 'configured' else '<p class="muted">Started from the configured values.</p>')
-            spec_h += table(['Free parameter', 'Value', 'Unit'], [[f'<code>{E(p[0])}</code>', pm(p[1], p[2], p[3]), E(p[4])] for p in v['params']])
+            at = {x['param']: x for x in LIMS[n]}
+            spec_h += table(['Free parameter', 'Value', 'Unit'], [[f'<code>{E(p[0])}</code>' + lim_mark([at[p[0]]] if p[0] in at else []),
+                                                                   pm(p[1], p[2], p[3]), E(p[4])] for p in v['params']])
             if v.get('fixed'):
                 spec_h += table(['Fixed parameter', 'Value', 'Unit'], [[f'<code>{E(x[0])}</code>', fmt(x[1]), E(x[2])] for x in v['fixed']])
             if v.get('overrides'):
@@ -325,6 +358,9 @@ th.sort[aria-sort="ascending"]::after {{ content:" ▲"; color:var(--accent) }} 
 tr.hi td {{ background:var(--accent-soft) }}
 .evctl {{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:14px }}
 @@PLOTCSS@@
+.lim {{ color:var(--warn); font-weight:700; cursor:help }} .limtxt {{ color:var(--warn); font-size:13px }}
+.limbox {{ border:1px solid var(--warn); border-left-width:4px; border-radius:8px; padding:8px 12px; background:var(--raise); font-size:14px }}
+.limbox ul {{ margin:4px 0 6px; padding-left:20px }} .limbox b {{ color:var(--warn) }}
 @@COUNTSCSS@@
 .evctl input[type=number] {{ width:84px; font:13px ui-monospace,Menlo,monospace; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg) }}
 .evbtn {{ font:500 13px system-ui; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg); cursor:pointer; margin-left:auto }}

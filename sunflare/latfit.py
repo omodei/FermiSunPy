@@ -124,6 +124,8 @@ def fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=None, quiet=True, o
            'fixed': _params.describe_fixed([(p.name, p) for p in _main(model).parameters.values()
                                             if p.name not in _params.HIDDEN])}
     out['no_errors'] = no_errors
+    if not fix_shape:
+        out['at_limits'] = _params.limits_of_lat(model, kind, LAT_SOURCE)
     if counts:
         try:
             out['counts'] = count_spectrum(plugin)
