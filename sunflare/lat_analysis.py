@@ -9,7 +9,6 @@ Bayesian blocks of the Sun photons ('bb'), N photons per bin ('const') or custom
 Usage: python -m sunflare.lat_analysis flares/<id>/config_<id>.json
 Output: results/lat/{lat_summary.json, lat_lightcurve.png, lat_integrated_*.png, lat_events.json}
 """
-import glob
 import os
 import sys
 
@@ -49,41 +48,9 @@ models = cfg.LAT_TR_models or ['pion']
 windows = [w for w in info.get('lat_windows', []) if w[1] > info['tmin'] and w[0] < info['tmax']]
 
 
-def clip_to_windows(edges_list):
-    """Split [a, b] intervals at the visibility windows and drop the parts outside them."""
-    res = []
-    for a, b in edges_list:
-        for w0, w1 in windows:
-            lo, hi = max(a, w0), min(b, w1)
-            if hi - lo >= 5:
-                res.append([round(lo, 3), round(hi, 3)])
-    return res
-
-
-# ------------------------------------------------------------------ intervals
-integ = cfg.LAT_integrated_interval
-if not integ:
-    after = [w for w in windows if w[1] > 0]
-    integ = [max(0.0, after[0][0]), after[-1][1]] if after else [0.0, info['tmax']]
-integ = [float(integ[0]), float(integ[1])]
-ev = lcdata.lat_events(fdir, info, roi=cfg.roi, emin=cfg.LAT_EMIN_MEV, zmax=cfg.zmax, sun_centered=cfg.sun_centered)
-near = ev['sep'] < 1.5 * lat_data.psf68(ev['E'])
-t_near = np.sort(ev['t'][near & (ev['t'] >= integ[0]) & (ev['t'] <= integ[1])])
-method = cfg.LAT_TR_method
-if method == 'custom' and cfg.LAT_TR_custom:
-    bins = [[float(a), float(b)] for a, b in cfg.LAT_TR_custom]
-elif method == 'bb' and len(t_near) > 5:
-    from threeML.utils import bayesian_blocks
-    e = bayesian_blocks.bayesian_blocks(t_near, integ[0], integ[1], p0=float(cfg.LAT_TR_bb_p0))
-    bins = clip_to_windows(list(zip(e[:-1], e[1:])))
-elif method == 'const' and len(t_near) > 2 * cfg.LAT_TR_N:
-    n = int(cfg.LAT_TR_N)
-    e = [integ[0]] + [0.5 * (t_near[i - 1] + t_near[i]) for i in range(n, len(t_near) - n // 2, n)] + [integ[1]]
-    bins = clip_to_windows(list(zip(e[:-1], e[1:])))
-else:
-    method = 'windows'
-    bins = clip_to_windows([integ])
-bins = [b for b in bins if b[1] - b[0] >= 5]
+# ------------------------------------------------------------------ intervals (same code as the GUI's Bayesian-blocks button)
+from sunflare import lat_bins  # noqa: E402
+bins, method, integ = lat_bins.compute(cfg, info, fdir)
 log(f'### STAGE: LAT intervals: integrated {integ[0]:g}-{integ[1]:g} s, {len(bins)} time-resolved bins ({method})')
 for b in bins:
     log(f'  bin {b[0]:9.1f} - {b[1]:9.1f} s')

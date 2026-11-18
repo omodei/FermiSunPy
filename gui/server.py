@@ -237,6 +237,23 @@ class Handler(BaseHTTPRequestHandler):
                     if k[0] == fid:
                         EV_CACHE.pop(k)
                 return self.send(200, {'id': start_job('fetch', fid, cmd), 'name': fid})
+            if method == 'POST' and p == '/api/lat_bins':
+                # Bayesian blocks of the Sun photons (same code as the LAT step), or rates of the given bins
+                b = self.body()
+                cfg = dict(common.DEFAULTS)
+                cfg.update(b['config'])
+                fid = common.normalize_name(cfg['name'])
+                info = common.load_json(common.info_path(fid), {})
+                if not info.get('has_lat'):
+                    raise ValueError('No LAT data for this flare')
+                from sunflare import lat_bins
+                if b.get('bins') is not None:
+                    bins, used, integ = [[float(x), float(y)] for x, y in b['bins']], 'custom', None
+                else:
+                    bins, used, integ = lat_bins.compute(cfg, info, common.flare_dir(fid), method=b.get('method', 'bb'),
+                                                         t0=b.get('t0'), t1=b.get('t1'))
+                rates = lat_bins.block_rates(cfg, info, common.flare_dir(fid), bins)
+                return self.send(200, {'bins': bins, 'rates': rates, 'method': used, 'interval': integ})
             if method == 'POST' and p == '/api/config':
                 path = common.write_config(self.body())
                 return self.send(200, {'path': path, 'text': open(path).read()})

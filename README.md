@@ -73,7 +73,9 @@ conda activate FermiSunPy        # needs fermitools, threeML, astromodels and su
 2. **GBM detectors**: sorted by the Sun angle; the two NaI and the BGO facing the Sun are pre-selected.
 3. **Light curves & intervals**: GOES, GBM NaI/BGO bands, LLE, LAT photons and the Sun off-axis/zenith angles
    on a common UTC axis. Drag to define GBM/LLE backgrounds, joint spectral-fit intervals, the LAT localization
-   interval, the LAT time-integrated interval and custom LAT bins.
+   interval, the LAT time-integrated interval and custom LAT bins. *Bayesian blocks* (with p0) fills the custom LAT
+   bins from the Sun photons of the time-integrated interval (same selection as the LAT step, split at the
+   visibility windows) and draws each bin's photon rate on the LAT panel; the bins can then be edited.
 4. **LAT analysis**: event class, ROI, zenith/θ cuts, energy range and flux band, Sun-centred frame, localization
    (gtfindsrc + TS map), time-resolved binning (visibility windows, Bayesian blocks, N photons, custom) and LAT
    models (pion-decay template, power law, cutoff power law).

@@ -100,6 +100,7 @@ td.num { font-family: var(--f-mono); font-size: 13px } td.l { text-align: left }
 .panel { position: relative; border-bottom: 1px solid var(--line) } .panel:last-child { border-bottom: 0 }
 .panel canvas { display: block; width: 100%; cursor: crosshair }
 .panel .tag { position: absolute; left: 66px; top: 6px; font: 500 12px var(--f-mono); color: var(--fg); background: var(--surface); border: 1px solid var(--line); padding: 1px 7px; border-radius: 4px; pointer-events: none; max-width: calc(100% - 90px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.chips[data-list="LAT_TR_custom"] { padding-right: 4px }
 .panel .busy { position: absolute; right: 10px; top: 6px; font-size: 12px; color: var(--muted) }
 .hint { font-size: 13px; color: var(--muted) }
 .readout { font: 13px var(--f-mono); color: var(--muted); min-height: 20px }
@@ -243,7 +244,14 @@ pre.cfg { margin: 0; max-height: 320px; overflow: auto; background: var(--raise)
     <div class="ivgroup"><header><h3><span class="dot" style="background:var(--src)"></span> Spectral-fit intervals <span class="muted" style="font-weight:400">(one joint fit each)</span></h3><button class="small" data-add="spectral_intervals">+ Add</button></header><div class="chips" data-list="spectral_intervals"></div></div>
     <div class="ivgroup"><header><h3><span class="dot" style="background:var(--loc)"></span> LAT localization</h3><button class="small" data-add="LOC_interval">Set</button></header><div class="chips" data-list="LOC_interval"></div></div>
     <div class="ivgroup"><header><h3><span class="dot" style="background:var(--integ)"></span> LAT time-integrated</h3><button class="small" data-add="LAT_integrated_interval">Set</button></header><div class="chips" data-list="LAT_integrated_interval"></div></div>
-    <div class="ivgroup"><header><h3><span class="dot" style="background:var(--bin)"></span> LAT custom bins <span class="muted" style="font-weight:400">(binning = custom)</span></h3><button class="small" data-add="LAT_TR_custom">+ Add</button></header><div class="chips" data-list="LAT_TR_custom"></div></div>
+    <div class="ivgroup"><header><h3><span class="dot" style="background:var(--bin)"></span> LAT custom bins <span class="muted" style="font-weight:400">(binning = custom)</span></h3><button class="small" data-add="LAT_TR_custom">+ Add</button></header>
+      <div class="row" style="gap:8px">
+        <label class="row hint" style="gap:5px" for="f-bbp0">p0 <input type="number" id="f-bbp0" data-key="LAT_TR_bb_p0" step="any" min="0" style="width:80px"></label>
+        <button class="small" id="bbbtn" title="Bayesian blocks of the Sun photons in the LAT time-integrated interval, split at the visibility windows (same selection as the LAT step)">Bayesian blocks</button>
+        <button class="small" id="binclear">Clear</button>
+        <span class="hint" id="bbmsg"></span>
+      </div>
+      <div class="chips" data-list="LAT_TR_custom" style="max-height:260px;overflow:auto"></div></div>
   </div>
   <div class="grid-form">
     <div class="field"><label for="f-GBM_bkg_poly_order">GBM background polynomial</label><select id="f-GBM_bkg_poly_order" data-key="GBM_bkg_poly_order" data-type="int"><option value="-1">auto (best order)</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
@@ -640,8 +648,28 @@ function draw(p) {
   } else if (d && d.kind === 'events') {
     const Emax = Math.max(2000, ...d.E) * 1.3, lo = 90;
     const ys = logAxis(c, lo, Emax, y0, y1, x0, v => v >= 1000 ? v / 1000 + ' GeV' : v + ' MeV');
-    for (let i = 0; i < d.t.length; i++) { const x = xs(p, d.t[i]); if (x < x0 || x > x1) continue; c.globalAlpha = d.near[i] ? .85 : .35; c.fillStyle = d.near[i] ? css('--lat') : css('--muted'); c.beginPath(); c.arc(x, ys(Math.max(d.E[i], lo)), d.near[i] ? 2.6 : 1.6, 0, 7); c.fill(); }
+    const dim = S.binRates && S.cfg.LAT_TR_custom.length ? 0.4 : 1;
+    for (let i = 0; i < d.t.length; i++) { const x = xs(p, d.t[i]); if (x < x0 || x > x1) continue; c.globalAlpha = (d.near[i] ? .85 : .35) * dim; c.fillStyle = d.near[i] ? css('--lat') : css('--muted'); c.beginPath(); c.arc(x, ys(Math.max(d.E[i], lo)), d.near[i] ? 2.6 : 1.6, 0, 7); c.fill(); }
     c.globalAlpha = 1;
+    const bins = S.cfg.LAT_TR_custom, br = S.binRates;
+    if (br && bins.length && br.key === JSON.stringify(bins) && br.rates.length === bins.length) {
+      const vis = bins.map((b, i) => [b, br.rates[i]]).filter(([b]) => b[1] > S.view.tmin && b[0] < S.view.tmax);
+      const rmax = Math.max(1e-9, ...vis.map(v => v[1]));
+      const yr = v => y1 - (y1 - y0) * 0.92 * v / rmax;
+      const path = () => {
+        c.beginPath(); let last = null;
+        for (const [[a, b], r] of vis) {
+          const xa = Math.max(x0, xs(p, a)), xb = Math.min(x1, xs(p, b)), y = yr(r);
+          if (last !== null && Math.abs(last - a) < 1e-6) c.lineTo(xa, y); else c.moveTo(xa, y);
+          c.lineTo(xb, y); last = b;
+        }
+      };
+      c.lineJoin = 'round';
+      c.strokeStyle = css('--surface'); c.lineWidth = 6; path(); c.stroke();     // halo over the photons
+      c.strokeStyle = css('--bin'); c.lineWidth = 2.6; path(); c.stroke(); c.lineWidth = 1;
+      c.fillStyle = css('--bin'); c.textAlign = 'right';
+      c.fillText(`blocks: max ${rmax >= 10 ? rmax.toFixed(1) : rmax.toPrecision(2)} photons/s`, x1 - 6, y0 + 14);
+    }
   } else if (d && d.kind === 'angles') {
     const ys = v => y1 - (y1 - y0) * v / 180;
     c.textAlign = 'right'; c.fillStyle = css('--muted'); [0, 90, 180].forEach(v => c.fillText(v + '°', x0 - 6, ys(v) + 4));
@@ -696,6 +724,7 @@ function addInterval(key, iv) {
 }
 function renderIntervals() {
   $('#llegroup').hidden = !(S.info.has_lle && S.cfg.use_lle);
+  refreshBinRates();
   for (const box of $$('[data-list]')) {
     const key = box.dataset.list, L = ivList(key);
     box.innerHTML = L.length ? L.map((iv, i) => `<div class="chip"><input type="number" step="any" value="${iv[0]}" data-k="${key}" data-i="${i}" data-j="0" aria-label="start"><span>to</span><input type="number" step="any" value="${iv[1]}" data-k="${key}" data-i="${i}" data-j="1" aria-label="stop"><button data-del="${key}" data-i="${i}" title="Remove" aria-label="Remove interval">×</button><small>${utcOf(iv[0])} – ${utcOf(iv[1])} UTC · ${(iv[1] - iv[0]).toFixed(0)} s</small></div>`).join('')
@@ -705,6 +734,34 @@ function renderIntervals() {
   $$('[data-del]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.del; if (SINGLE.has(k)) S.cfg[k] = null; else S.cfg[k].splice(+b.dataset.i, 1); renderIntervals(); drawAll(); changed(); }));
 }
 $$('[data-add]').forEach(b => b.addEventListener('click', () => { const c = (S.view.tmin + S.view.tmax) / 2, w = (S.view.tmax - S.view.tmin) / 10; addInterval(b.dataset.add, [snap(c - w / 2), snap(c + w / 2)]); }));
+
+/* ---------------------------------------------------------------- LAT Bayesian blocks */
+$('#bbbtn').addEventListener('click', async () => {
+  if (!S.info.has_lat) return toast('No LAT data for this flare', true);
+  $('#bbbtn').disabled = true; $('#bbmsg').textContent = 'computing…';
+  try {
+    const r = await api('/api/lat_bins', { config: cfgPayload(), method: 'bb' });
+    S.cfg.LAT_TR_custom = r.bins; S.cfg.LAT_TR_method = 'custom';
+    S.binRates = { key: JSON.stringify(r.bins), rates: r.rates };
+    renderSettings(); renderIntervals(); drawAll(); changed();
+    $('#bbmsg').textContent = `${r.bins.length} blocks, p0 = ${S.cfg.LAT_TR_bb_p0}, ${r.interval[0]}–${r.interval[1]} s`;
+    toast(`${r.bins.length} Bayesian blocks written to the LAT custom bins (binning set to custom)`);
+  } catch (e) { $('#bbmsg').textContent = ''; toast(e.message, true); }
+  $('#bbbtn').disabled = false;
+});
+$('#binclear').addEventListener('click', () => { S.cfg.LAT_TR_custom = []; S.binRates = null; $('#bbmsg').textContent = ''; renderIntervals(); drawAll(); changed(); });
+let rateT;
+function refreshBinRates() {
+  clearTimeout(rateT);
+  const bins = S.cfg && S.cfg.LAT_TR_custom;
+  if (!S.info || !S.info.has_lat || !bins || !bins.length) { S.binRates = null; drawAll(); return; }
+  const key = JSON.stringify(bins);
+  if (S.binRates && S.binRates.key === key) return;
+  rateT = setTimeout(async () => {
+    try { const r = await api('/api/lat_bins', { config: cfgPayload(), bins }); S.binRates = { key, rates: r.rates }; drawAll(); }
+    catch (e) { S.binRates = null; }
+  }, 400);
+}
 
 /* ---------------------------------------------------------------- settings */
 function renderSettings() {
@@ -717,6 +774,7 @@ for (const el of $$('[data-key]')) el.addEventListener('change', () => {
   if (k === 'use_lle' || k === 'use_lat') { buildPanels(); loadLC(); renderIntervals(); }
   if (k === 'sun_centered' || k === 'roi') { loadLC(); if (k === 'sun_centered' && S.cfg.sun_centered && !S.info.has_lat_sun) toast('Sun-centred FT1/FT2 will be created at the start of the LAT steps'); }
   if (k === 'zmax') drawAll();
+  if (['roi', 'zmax', 'LAT_EMIN_MEV', 'sun_centered'].includes(k) && S.binRates) { S.binRates = null; refreshBinRates(); }
   changed();
 });
 $('#resetdefaults').addEventListener('click', () => {
