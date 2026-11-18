@@ -13,7 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from sunflare import common, report_plot  # noqa: E402
+from sunflare import common, report_counts, report_plot  # noqa: E402
 
 cfg = common.load_config(sys.argv[1])
 info, fdir = cfg.info, cfg.pwd
@@ -71,6 +71,8 @@ EVENTS = []
 lc = common.load_json(os.path.join(R, 'lightcurves', 'lightcurves.json'), {})
 loc = common.load_json(os.path.join(R, 'localization', 'localization.json'))
 lat = common.load_json(os.path.join(R, 'lat', 'lat_summary.json'))
+CSPEC = report_counts.build(lat, R, report_plot.spec_id)
+CKEYS = report_counts.keys(CSPEC)
 facts = [('Flare', cfg.name), ('GOES class', info.get('goes_class', '–')),
          ('T0 (UTC)', info.get('t0_utc')), ('MET of T0', f'{info["T0"]:.3f}'),
          ('GOES peak', f'{utc(info["goes_peak_t"])} UTC (T0{info["goes_peak_t"]:+.0f} s)' if info.get('goes_peak_t') is not None else '–'),
@@ -156,12 +158,12 @@ if lat:
         h += f'<details class="static"><summary>Static figure (used when printing)</summary>{st}</details>'
     band = f'{lat["flux_band_MeV"][0]:g}–{lat["flux_band_MeV"][1]:g} MeV'
 
-    def rows_for(rs, attrs=None):
+    def rows_for(rs, attrs=None, keyf=lambda r: f'{r["t0"]:.3f}'):
         out = []
         for r in rs:
             for k, f in r['fits'].items():
                 if 'TS' not in f:
-                    out.append([f'{utc(r["t0"])}–{utc(r["t1"])}', E(k), '–', '–', E(f.get('error', 'failed')), '–'])
+                    out.append([f'{utc(r["t0"])}–{utc(r["t1"])}', E(k), '–', '–', E(f.get('error', 'failed')), '–', '–'])
                     if attrs is not None:
                         attrs.append(f' data-bin="{r["t0"]:.3f}"')
                     continue
@@ -177,12 +179,14 @@ if lat:
                 else:
                     flux = f'&lt; {fmt(f.get("flux_ul"))} <span class="err">(95% UL)</span>'
                 out.append([f'{utc(r["t0"])}–{utc(r["t1"])}<br><span class="err">{r["t0"]:.0f}–{r["t1"]:.0f} s</span>',
-                            E(k) + (' ★' if r.get('best') == k else ''), f'{f["TS"]:.1f}', flux, par, f'{f["logL"]:.2f}'])
+                            E(k) + (' ★' if r.get('best') == k else ''), f'{f["TS"]:.1f}', flux, par, f'{f["logL"]:.2f}',
+                            report_counts.button(keyf(r), k) if k in CKEYS.get(keyf(r), ()) else
+                            '<span class="err" title="Count spectra are saved by the LAT step since this version">re-run the LAT step</span>'])
                 if attrs is not None:
                     attrs.append(f' data-bin="{r["t0"]:.3f}"')
         return out
-    head = ['Interval (UTC)', 'Model', 'TS', f'Flux {band} [ph cm⁻² s⁻¹]', 'Parameters', 'log L']
-    h += '<h3>Time-integrated</h3>' + table(head, rows_for([lat['integrated']]))
+    head = ['Interval (UTC)', 'Model', 'TS', f'Flux {band} [ph cm⁻² s⁻¹]', 'Parameters', 'log L', 'Spectrum']
+    h += '<h3>Time-integrated</h3>' + table(head, rows_for([lat['integrated']], keyf=lambda r: 'integ'))
     h += img(os.path.join(R, 'lat', 'lat_integrated_sed.png'), 'LAT time-integrated spectral models', 'fig half')
     for k in lat['models']:
         h += img(os.path.join(R, 'lat', f'lat_integrated_counts_{k}.png'), f'Count spectrum, {common.LAT_MODELS[k]}', 'fig half')
@@ -236,10 +240,13 @@ for s in sorted(glob.glob(os.path.join(R, 'spectrum_*', 'summary.json')), key=la
         best_bic = min(v['BIC'] for v in S['fits'].values())
         rows = []
         for n, v in sorted(S['fits'].items(), key=lambda kv: kv[1]['BIC']):
+            sk = report_plot.spec_id(a, b)
             rows.append([f'<code>{E(n)}</code>' + (' ★' if n == S['best'] else '') +
                          (' <span class="err">(no errors: parameters at bounds)</span>' if v.get('no_errors') else ''), f'{-v["logL"]:.2f}', v['n_free'],
-                         f'{v["AIC"]:.1f}', f'{v["BIC"]:.1f}', f'{v["BIC"] - best_bic:.1f}'])
-        spec_h += table(['Model', '−log L', 'free par.', 'AIC', 'BIC', 'ΔBIC'], rows)
+                         f'{v["AIC"]:.1f}', f'{v["BIC"]:.1f}', f'{v["BIC"] - best_bic:.1f}',
+                         report_counts.button(sk, n, 'Counts &amp; νFν') if n in CKEYS.get(sk, ()) else
+                         '<span class="err" title="Interactive spectra are saved by the spectral step since this version">re-run the spectral step</span>'])
+        spec_h += table(['Model', '−log L', 'free par.', 'AIC', 'BIC', 'ΔBIC', 'Spectrum'], rows)
         if S['nested']:
             spec_h += '<h4>Component significance (likelihood ratio)</h4>' + table(
                 ['Added component', 'to model', 'TS = 2ΔlogL'],
@@ -318,6 +325,7 @@ th.sort[aria-sort="ascending"]::after {{ content:" ▲"; color:var(--accent) }} 
 tr.hi td {{ background:var(--accent-soft) }}
 .evctl {{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:14px }}
 @@PLOTCSS@@
+@@COUNTSCSS@@
 .evctl input[type=number] {{ width:84px; font:13px ui-monospace,Menlo,monospace; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg) }}
 .evbtn {{ font:500 13px system-ui; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--fg); cursor:pointer; margin-left:auto }}
 </style></head><body>
@@ -332,6 +340,7 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
 }}));
 @@EVJS@@
 @@LCJS@@
+@@COUNTSJS@@
 const h = location.hash.slice(1).split('&')[0]; const tb = document.querySelector(`nav button[data-t="${{h}}"]`); if (tb) tb.click();
 </script></body></html>'''
 EVJS = r'''
@@ -384,6 +393,7 @@ if (EV.length && $e('#evtable')) {
 page = page.replace('@@EVJS@@', EVJS, 1)
 LCD = report_plot.build_data(cfg, info, fdir, R, lat, EVENTS, log=lambda *a: print(*a, flush=True))
 page = page.replace('@@PLOTCSS@@', report_plot.CSS, 1).replace('@@LCJS@@', report_plot.script(LCD), 1)
+page = page.replace('@@COUNTSCSS@@', report_counts.CSS, 1).replace('@@COUNTSJS@@', report_counts.script(CSPEC), 1)
 out = os.path.join(R, 'report.html')
 os.makedirs(R, exist_ok=True)
 with open(out, 'w') as f:

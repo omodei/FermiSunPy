@@ -64,7 +64,27 @@ def apply_overrides(model, kind, overrides):
     return applied
 
 
-def fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=None, quiet=True, overrides=None, start=None):
+def _sig(x, n=4):
+    return [float(f'{v:.{n}g}') for v in np.asarray(x, dtype=float)]
+
+
+def count_spectrum(plugin):
+    """Observed counts and best-fit model counts per energy bin, per model component, of a LATLike plugin.
+
+    {'E': bin edges [MeV], 'n': observed counts, 'm': {'Sun'|'Isotropic'|'Galactic'|<other>: model counts}}"""
+    like = plugin.like
+    plugin.get_log_like()          # push the current (best-fit) parameters into the gtlike model
+    out = {'E': _sig(like.energies, 6), 'n': [int(round(v)) for v in np.asarray(like.nobs, dtype=float)], 'm': {}}
+    for name in like.sourceNames():
+        lab = 'Isotropic' if 'Isotropic' in name else 'Galactic' if 'Galactic' in name else \
+            LAT_SOURCE if name == LAT_SOURCE else name
+        c = np.asarray(like._srcCnts(name), dtype=float)
+        out['m'][lab] = _sig(c + np.asarray(out['m'].get(lab, 0.0)))
+    return out
+
+
+def fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=None, quiet=True, overrides=None, start=None,
+        counts=True):
     """Fit one LATLike plugin. Returns (jl, dict of results).
 
     overrides: param_overrides (keys 'lat:<kind>.<par>'); start: {path: value} from a previous interval."""
@@ -104,6 +124,11 @@ def fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=None, quiet=True, o
            'fixed': _params.describe_fixed([(p.name, p) for p in _main(model).parameters.values()
                                             if p.name not in _params.HIDDEN])}
     out['no_errors'] = no_errors
+    if counts:
+        try:
+            out['counts'] = count_spectrum(plugin)
+        except Exception as e:          # the report then just has no count spectrum for this fit
+            out['counts_error'] = str(e)
     try:
         df = jl.results.get_data_frame()
     except Exception:
@@ -137,7 +162,7 @@ def upper_limit(plugin, kind, ra, dec, emin_mev, emax_mev, overrides=None):
         o, _ = _params.resolve(overrides, kind, p, prefix='lat:')
         if o.get('fix') and o.get('value') is not None:
             shape[p] = float(o['value'])
-    jl, r = fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=shape, overrides=overrides)
+    jl, r = fit(plugin, kind, ra, dec, emin_mev, emax_mev, fix_shape=shape, overrides=overrides, counts=False)
     for unit, tag in (('1/(cm2 s)', 'flux_ul'), ('erg/(cm2 s)', 'eflux_ul')):
         try:
             f = jl.results.get_flux(ene_min=emin_mev * u.MeV, ene_max=emax_mev * u.MeV, flux_unit=unit,

@@ -118,6 +118,14 @@ every panel, the LAT bin fit and the spectral-interval result; clicking a LAT po
 results. *Filter events table* restricts the source-probability table to the zoomed time range. The static PNGs
 are kept under *Static figures* and used when printing.
 
+**Interactive spectra.** Every LAT fit (time-integrated and each time-resolved bin) and every joint-fit model has a
+*Counts* button that opens its count spectrum: data, total model, components (Sun / isotropic / Galactic for the LAT,
+background for GBM and LLE) and residuals (data − model)/σ, with channels grouped to a minimum number of counts. You
+can switch or compare models, toggle detectors and components, step through bins or intervals with ← →, drag to zoom
+in energy, drag the gap between the panels to resize them, go full screen and save a PNG. Joint fits also show the
+νFν of each model and its components. The data come from the LAT step (`lat_summary.json`) and the spectral step
+(`spectrum_<t0>-<t1>/counts.json`); results made before this version need those steps re-run.
+
 `--lat-ft1/--lat-ft2` and `--lle-dir` import files already on disk (e.g. weekly files, or when the LAT data server
 is down). The pion/NAR/BRD astromodels templates are built on first use from `solarflares/Sun/data`
 (override with `SUNFLARE_TEMPLATES`); flare data go to `flares/` (override with `SUNFLARE_DATA`).

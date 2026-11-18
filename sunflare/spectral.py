@@ -187,6 +187,8 @@ for (t0, t1) in cfg.spectral_intervals:
         continue
     data = DataList(*plugins)
     fitted = {}
+    from sunflare import countdata
+    counts = {'interval': [t0, t1], 'data': {}, 'models': {}, 'vfv_E': None}
     for name in cfg.spectral_models:
         log(f'### MODEL {name}')
         try:
@@ -266,6 +268,17 @@ for (t0, t1) in cfg.spectral_intervals:
             jl.restore_best_fit()
         except Exception:
             pass
+        try:            # count spectra and nuFnu curves for the report's interactive viewer
+            cm = {}
+            for p in plugins:
+                if p.name not in counts['data']:
+                    counts['data'][p.name] = countdata.data(p)
+                cm[p.name] = countdata.model(p)
+            emax_v = cfg.SPEC_LAT_EMAX_MEV * 1e3 if use_lat else (cfg.LLE_EMAX_MEV * 1e3 if use_lle else cfg.GBM_BGO_EMAX_KEV)
+            counts['vfv_E'], vf = countdata.vfv(sm, min(cfg.GBM_NAI_EMIN_KEV if any(d[0] == 'n' for d in dets) else 300, 300), emax_v)
+            counts['models'][name] = {'ds': cm, 'vfv': vf}
+        except Exception as e:
+            log(f'  count-spectrum data not saved: {type(e).__name__}: {e}')
         PREV[name] = {'values': P.free_values(sm.model, sm.source_name), 'interval': (t0, t1)}
         log(f'  -logL = {-r["logL"]:.2f}  BIC = {r["BIC"]:.1f}  ' +
             '  '.join(f'{p[0]}={p[1]:.3g}' for p in r['params'][:8]))
@@ -288,5 +301,7 @@ for (t0, t1) in cfg.spectral_intervals:
         ax.set_title(f'{cfg.name}  {t0:g}–{t1:g} s — best model: {summary["best"]}')
         fig.savefig('vfv.png', dpi=110, bbox_inches='tight')
         plt.close(fig)
+    if counts['models']:
+        common.save_json('counts.json', counts)
     common.save_json('summary.json', summary)
 log('### DONE spectral fits')

@@ -196,7 +196,7 @@ def figure(fid, panels, title):
             '<div class="ftool"></div><div class="fpanels"></div>'
             '<p class="fhint">Drag across a panel to zoom · Shift-drag to pan · ⌘/Ctrl + wheel or pinch to zoom around '
             'the cursor · double-click for the full window · drag a panel\'s lower edge to resize it · click a gold '
-            'interval tab or a LAT point to open its results</p><div class="ftip" hidden></div></div>')
+            'interval tab or a LAT point to open its results · Shift-click a LAT point for its count spectrum</p><div class="ftip" hidden></div></div>')
 
 
 CSS = r'''
@@ -633,6 +633,9 @@ function attach(F_, p) {
   p.cv.addEventListener('pointerup', ev => {
     if (!down) return; const d = down; down = null;
     const moved = Math.abs(ev.clientX - d.x) > 4;
+    if (d.pan && !moved && PANELS[p.id].like && window.openCounts) {     // shift-click on a LAT bin: its count spectrum
+      view = d.v; const b = D.like.models[likeModel].find(b => d.t >= b.a && d.t < b.b); if (b) window.openCounts(b.key, likeModel); return;
+    }
     if (d.pan) { const v = { ...view }; view = d.v; setView(v.a, v.b); return; }
     const s = sel; sel = null;
     if (moved) { setView(Math.min(s.a, s.b), Math.max(s.a, s.b)); return; }
