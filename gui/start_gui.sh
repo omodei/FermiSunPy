@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Start the solar-flare analysis console inside the FermiSunPy conda environment.
-# Usage: ./gui/start_gui.sh [port]   (default 8766), then open http://localhost:8766
-PORT=${1:-8766}
-CONDA_BASE=${CONDA_BASE:-$HOME/miniforge3}
-source "$CONDA_BASE/etc/profile.d/conda.sh"
-conda activate FermiSunPy || { echo "Could not activate the FermiSunPy conda environment"; exit 1; }
-cd "$(dirname "$0")/.."
-exec python gui/server.py --port "$PORT"
+# The solar-flare console moved to the fermiconsole repository (sun flavor). This wrapper starts it.
+#   ./gui/start_gui.sh [port] [--port PORT] [--host HOST] [-h]
+FC=${FERMICONSOLE_PATH:-$HOME/gitrepository/fermiconsole}
+if [[ ! -x "$FC/start_console.sh" ]]; then
+  echo "fermiconsole not found in $FC: clone https://github.com/omodei/fermiconsole there or set FERMICONSOLE_PATH"
+  exit 1
+fi
+exec "$FC/start_console.sh" sun "$@"
