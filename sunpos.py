@@ -5,12 +5,19 @@ from math import atan2,radians,degrees,sin,cos,asin,tan
 # Helper functions for degree-radian conversion
 def d(x): return degrees(x)
 def r(x): return radians(x)
+# Mission start (2001-01-01 00:00:00 UTC) in seconds: the name changed across fermitools versions
+def _mission_start_seconds():
+    try:
+        return pl.JulianDate.seconds(pl.JulianDate_missionStart())
+    except AttributeError:
+        return pl.JulianDate.missionStart().seconds()
+
 # Convert MET (Mission Elapsed Time) to Julian Date
 def getJD(met):
     if met > 252460801: met-=1 # 2008 leap second
     if met > 157766400: met-=1 # 2005 leap second
     if met > 362793601: met-=1 # 2012 leap second    
-    return  (pl.JulianDate.seconds(pl.JulianDate_missionStart())+met)/pl.JulianDate.secondsPerDay
+    return  (_mission_start_seconds()+met)/pl.JulianDate.secondsPerDay
 
 # Convert MET to JulianDate object
 def _jd_from_met(met):
@@ -18,10 +25,13 @@ def _jd_from_met(met):
     return jd 
 # Get the Sun's position at a given MET
 def getSunPosition( met ):
-    if 'HEADAS' not in os.environ:
-        raise RuntimeError('HEADAS environment variable not defined')
-    
-    os.environ['TIMING_DIR']=os.path.join(os.environ['HEADAS'],"refdata")
+    if 'TIMING_DIR' not in os.environ:
+        if 'HEADAS' in os.environ:
+            os.environ['TIMING_DIR']=os.path.join(os.environ['HEADAS'],"refdata")
+        elif 'CONDA_PREFIX' in os.environ: # fermitools installed with conda
+            os.environ['TIMING_DIR']=os.path.join(os.environ['CONDA_PREFIX'],"share","fermitools","refdata","fermi","jplephem")
+        else:
+            raise RuntimeError('HEADAS environment variable not defined')
     sun=pl.SolarSystem(pl.SolarSystem.SUN)
     return sun.direction(_jd_from_met(met))
 

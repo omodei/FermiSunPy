@@ -30,7 +30,10 @@ optional arguments:
   -h, --help  show this help message and exit
   -ft1 ft1    Input FT1 file to convert.
   -ft2 ft2    Input FT2 file to convert.
+  --legacy    Use the original event-by-event loop (slow).
   ```
+The default conversion is vectorized (`convertFT1_fast` / `convertFT2_fast`); it agrees with the original loop to
+better than 0.1 arcsec.
 
 To visualize the newly genberated FT1 file (it is saved with `_sun.fit` extension), you can use the standard fermitools, using the center of the ROI as 0,0 in CEL coordinate, For example:
 ```bash
@@ -51,5 +54,15 @@ Projection method e.g. AIT|ARC|CAR|GLS|MER|NCP|SIN|STG|TAN:[] CAR
 ```
 the output file can be visualized with standard visualization tools, such as fv, ds9 or with python code (astropy,...)
 
----
-For question and comments: [nicola.omodei@stanford.edu](mailto:nicola.omodei@stanford.edu)
+## Solar-flare analysis console (GUI) and pipeline
+
+The solar-flare analysis console (GOES + GBM + LLE + LAT pipeline, GUI and interactive report) now lives in the
+[fermiconsole](https://github.com/omodei/fermiconsole) repository, as its `sun` flavor. It uses `suncenter.py` and
+`sunpos.py` from this repository and keeps reading and writing the flare folders in `flares/` here.
+
+```bash
+./gui/start_gui.sh               # starts the fermiconsole solar-flare console (FermiSunPy env), http://localhost:8766
+```
+
+The wrapper looks for fermiconsole in `~/gitrepository/fermiconsole` (set `FERMICONSOLE_PATH` otherwise). The console
+code that was in `sunflare/` and `gui/` is in this repository's history (branch `solar-console`, cc5976d).
